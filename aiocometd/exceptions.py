@@ -31,6 +31,9 @@ class ServerError(AiocometdException):
     @property
     def error_code(self):
         """Error code part of the error message"""
+        # return the error code as an int if 3 digits can be matched at the
+        # beginning of the error string, for all other cases (None or invalid
+        # error string) return None
         if self.error is not None:
             match = re.search(r"^\d{3}", self.error)
             if match:
@@ -40,20 +43,35 @@ class ServerError(AiocometdException):
     @property
     def error_message(self):
         """Description of the error"""
+        # if the error string is None, then return None
         if self.error is not None:
-            message_string = self.error.split(":")[2]
-            if message_string:
-                return message_string
+            # if the third part of the error string can be matched then
+            # return the error message as a string even if it's empty
+            # if the third part can't be matched, then it must be and invalid
+            # message, return None
+            error_parts = self.error.split(":")
+            if len(error_parts) > 2:
+                return error_parts[2]
         return None
 
     @property
     def error_args(self):
         """Error message arguments"""
+        # if the error string is None, then return None
         if self.error is not None:
-            args_string = self.error.split(":")[1]
-            if args_string:
-                return args_string.split(",")
-        return []
+            # if the second part can't be matched, then it must be and invalid
+            # message, return None
+            error_parts = self.error.split(":")
+            if len(error_parts) > 1:
+                # if the second part is not empty, then return the arguments as
+                # a list, on empty second part return an empty list (to signal
+                # that the args part exists in the error string, but it's
+                # empty)
+                if error_parts[1]:
+                    return error_parts[1].split(",")
+                else:
+                    return []
+        return None
 
 
 class ClientError(AiocometdException):
