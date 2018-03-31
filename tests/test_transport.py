@@ -266,35 +266,45 @@ class TestLongPollingTransport(TestCase):
 
     async def test_consume_payload(self):
         payload = [
+            # event message
             {
                 "channel": "/test/channel1",
-                "successful": True,
                 "data": {"key": "value"},
                 "id": "1"
             },
+            # connect confirmation
             {
                 "channel": "/meta/connect",
                 "successful": True,
                 "advice": {"interval": 0, "reconnect": "retry"},
                 "id": "2"
             },
+            # subscribe confirmation, success
             {
                 "channel": "/meta/subscribe",
                 "subscription": "/test/channel1",
                 "successful": True,
                 "id": "3"
             },
+            # subscribe confirmation, failure
             {
                 "channel": "/meta/subscribe",
                 "subscription": "/test/channel2",
                 "successful": False,
                 "id": "4"
             },
+            # connect confirmation
             {
                 "channel": "/meta/connect",
                 "successful": True,
                 "advice": {"interval": 2, "reconnect": "none"},
                 "id": "5"
+            },
+            # service confirmation, failure
+            {
+                "channel": "/service/test",
+                "successful": False,
+                "id": "3"
             }
         ]
         self.transport.incoming_queue = asyncio.Queue()
@@ -303,9 +313,11 @@ class TestLongPollingTransport(TestCase):
 
         self.assertIsNone(result)
         self.assertEqual(self.transport._reconnect_advice,
-                         payload[-1]["advice"])
-        self.assertEqual(await self.transport.incoming_queue.get(),
-                         payload[0])
+                         payload[4]["advice"])
+        consumed_messages = []
+        while not self.transport.incoming_queue.empty():
+            consumed_messages.append(await self.transport.incoming_queue.get())
+        self.assertEqual(consumed_messages, [payload[0]])
 
     async def test_consume_payload_with_confirm_and_subscription(self):
         message = {
@@ -314,35 +326,45 @@ class TestLongPollingTransport(TestCase):
             "id": "3"
         }
         payload = [
+            # event message
             {
                 "channel": "/test/channel1",
-                "successful": True,
                 "data": {"key": "value"},
                 "id": "1"
             },
+            # connect confirmation
             {
                 "channel": "/meta/connect",
                 "successful": True,
                 "advice": {"interval": 0, "reconnect": "retry"},
                 "id": "2"
             },
+            # subscribe confirmation, success
             {
                 "channel": "/meta/subscribe",
                 "subscription": "/test/channel1",
                 "successful": True,
                 "id": "3"
             },
+            # subscribe confirmation, failure
             {
                 "channel": "/meta/subscribe",
                 "subscription": "/test/channel2",
                 "successful": False,
                 "id": "4"
             },
+            # connect confirmation
             {
                 "channel": "/meta/connect",
                 "successful": True,
                 "advice": {"interval": 2, "reconnect": "none"},
                 "id": "5"
+            },
+            # service confirmation, failure
+            {
+                "channel": "/service/test",
+                "successful": False,
+                "id": "3"
             }
         ]
         self.transport.incoming_queue = asyncio.Queue()
@@ -350,16 +372,21 @@ class TestLongPollingTransport(TestCase):
         result = \
             await self.transport._consume_payload(payload,
                                                   confirm_for=message,
-                                                  consume_subscriptions=True)
+                                                  consume_server_errors=True)
 
         self.assertIs(result, payload[2])
         self.assertEqual(self.transport._reconnect_advice,
-                         payload[-1]["advice"])
-        self.assertEqual(await self.transport.incoming_queue.get(),
-                         payload[0])
-        queue_item = await self.transport.incoming_queue.get()
-        self.assertIsInstance(queue_item, ServerError)
-        self.assertEqual(queue_item.message, payload[3])
+                         payload[4]["advice"])
+
+        consumed_messages = []
+        while not self.transport.incoming_queue.empty():
+            consumed_messages.append(await self.transport.incoming_queue.get())
+        self.assertEqual(len(consumed_messages), 3)
+        self.assertEqual(consumed_messages[0], payload[0])
+        self.assertIsInstance(consumed_messages[1], ServerError)
+        self.assertEqual(consumed_messages[1].message, payload[3])
+        self.assertIsInstance(consumed_messages[2], ServerError)
+        self.assertEqual(consumed_messages[2].message, payload[5])
 
     async def test_send_message(self):
         message = {

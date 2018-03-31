@@ -173,17 +173,21 @@ class LongPollingTransport:
                 "successful" in response_message)
 
     async def _consume_payload(self, payload, *, confirm_for=None,
-                               consume_subscriptions=False):
+                               consume_server_errors=False):
         """Enqueu event messages for the consumers and update the internal
         state of the transport, based on response messages in the *payload*.
 
         :param payload: A list of response messages
         :type payload: list[dict]
-        :param dict confirm_for: Return the confirmation reponse message for \
+        :param dict confirm_for: Return the confirmation response message for \
         the given *confirm_for* message.
-        :param bool consume_subscriptions: Normally meta responses are not \
-        enqueued for consumers. If it's True, then failed subscription \
-        responses will be enqueued for consumers as :obj:`ServerError` objects.
+        :param bool consume_server_errors: Consume server side error \
+        messages which could not or should not be handled by the transport. \
+        Let the consumers decide how to deal with them. (these errrors are \
+        failed confirmation messages for all channels except \
+        ``/meta/connect``, ``/meta/disconnect`` and ``/meta/handshake``). \
+        If it's True, then these messages will be enqueued for consumers as \
+        :obj:`ServerError` objects.
         :return: The confirmation response message for the *confirm_for*
                  message, otherwise ``None``
         :rtype: dict or None
@@ -196,11 +200,13 @@ class LongPollingTransport:
             if "advice" in message:
                 self._reconnect_advice = message["advice"]
 
-            # if enabled, consume subscription failures and enqueue them as
-            # ServerErrors
-            if (consume_subscriptions and
-                    message["channel"] == "/meta/subscribe" and
-                    not message["successful"]):
+            # if enabled, consume server side error messages and enqueue them
+            # as ServerErrors
+            if (consume_server_errors and
+                    message["channel"] != "/meta/connect" and
+                    message["channel"] != "/meta/disconnect" and
+                    message["channel"] != "/meta/handshake" and
+                    not message.get("successful", True)):
                 await self.incoming_queue.put(ServerError(message))
 
             # check if the message is the confirmation response we're looking
