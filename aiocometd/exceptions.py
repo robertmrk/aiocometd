@@ -12,6 +12,15 @@ class TransportError(AiocometdException):
     """Error during the transportation of messages"""
 
 
+class TransportInvalidOperation(TransportError):
+    """The requested operation can't be executed on the current state of the
+    transport"""
+
+
+class TransportTimeoutError(TransportError):
+    """Transport timeout"""
+
+
 class ServerError(AiocometdException):
     """CometD server side error"""
     def __init__(self, message):

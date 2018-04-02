@@ -1,13 +1,28 @@
 """Transport classes"""
 import asyncio
 import logging
+from enum import Enum, unique, auto
 
 import aiohttp
 
-from .exceptions import TransportError, ServerError
+from .exceptions import TransportError, ServerError, \
+    TransportInvalidOperation, TransportTimeoutError
 
 
 logger = logging.getLogger(__name__)
+
+
+@unique
+class TransportState(Enum):
+    """Describes a transport object's state"""
+    #: Transport is disconnected
+    DISCONNECTED = auto()
+    #: Transport is trying to establish a connection
+    CONNECTING = auto()
+    #: Transport is connected to the server
+    CONNECTED = auto()
+    #: Transport is disconnecting from the server
+    DISCONNECTING = auto()
 
 
 class LongPollingTransport:
@@ -43,11 +58,15 @@ class LongPollingTransport:
         "id": None
     }
 
-    def __init__(self, *, endpoint, incoming_queue, loop=None):
+    def __init__(self, *, endpoint, incoming_queue, reconnection_timeout=1,
+                 loop=None):
         """
         :param str endpoint: CometD service endpoint
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
                                              messages
+        :param reconnection_timeout: The time to wait before trying to \
+        reconnect to the server after a network failure
+        :type reconnection_timeout: None or int or float
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -71,6 +90,17 @@ class LongPollingTransport:
         self._subscriptions = set()
         #: boolean to mark whether to resubscribe on connect
         self._subscribe_on_connect = False
+        #: current state of the transport
+        self._state = TransportState.DISCONNECTED
+        #: asyncio connection task
+        self._connect_task = None
+        #: time to wait before reconnecting after a network failure
+        self._reconnect_timeout = reconnection_timeout
+
+    @property
+    def state(self):
+        """Current state of the transport"""
+        return self._state
 
     @property
     def subscriptions(self):
@@ -84,6 +114,19 @@ class LongPollingTransport:
         :return: Handshake response
         :rtype: dict
         """
+        return await self._handshake(connection_types, delay=None)
+
+    async def _handshake(self, connection_types, delay=None):
+        """Executes the handshake operation
+
+        :param list[str] connection_types: list of connection types
+        :param delay: Initial connection delay
+        :type delay: None or int or float
+        :return: Handshake response
+        :rtype: dict
+        """
+        if delay:
+            await asyncio.sleep(delay, loop=self.loop)
         # reset message id for a new client session
         self._message_id = 0
 
@@ -252,24 +295,118 @@ class LongPollingTransport:
                 await self.incoming_queue.put(message)
         return result
 
-    async def _connect(self):
+    def _start_connect_task(self, coro):
+        """Wrap the *coro* in a future and schedule it
+
+        The future is stored internally in :obj:`_connect_task`. The future's
+        results will be consumed by :obj:`_connect_done`.
+
+        :param coro: Coroutine
+        :return: Future
+        """
+        self._connect_task = asyncio.ensure_future(coro, loop=self.loop)
+        self._connect_task.add_done_callback(self._connect_done)
+        return self._connect_task
+
+    async def connect(self, connection_timeout=None):
         """Connect to the server
 
+        The transport will try to start and maintain a continuous connection
+        with the server, but it'll return with the response of the first
+        successful connection as soon as possible.
+
+        :param connection_timeout: Fail after the given amount of seconds if \
+        a successful connection can't be established.
+        :type connection_timeout: None or int or float
+        :return dict: The response of the first successful connection.
+        :raise TransportTimeoutError: If can't connect to the server within \
+        the time specified by *connection_timeout*.
+        :raise TransportInvalidOperation: If the transport doesn't has a \
+        client id yet, or if it's not in a :obj:`~TransportState.DISCONNECTED`\
+        state.
+        """
+        if not self.client_id:
+            raise TransportInvalidOperation(
+                "Can't connect to the server without a client id. "
+                "Do a handshake first.")
+        if self.state != TransportState.DISCONNECTED:
+            raise TransportInvalidOperation(
+                "Can't connect to a server without disconnecting first.")
+
+        try:
+            return await asyncio.wait_for(
+                self._start_connect_task(self._connect()),
+                timeout=connection_timeout,
+                loop=self.loop)
+        except asyncio.TimeoutError:
+            raise TransportTimeoutError("Failed to establish connection "
+                                        "within the given timeout.")
+
+    async def _connect(self, delay=None):
+        """Connect to the server
+
+        :param delay: Initial connection delay
+        :type delay: None or int or float
         :return: Connect response
         :rtype: dict
         """
+        if delay:
+            await asyncio.sleep(delay, loop=self.loop)
         message = self._CONNECT_MESSAGE.copy()
+        extra_messages = None
         if self._subscribe_on_connect and self.subscriptions:
             extra_messages = []
             for subscription in self.subscriptions:
                 extra_message = self._SUBSCRIBE_MESSAGE.copy()
                 extra_message["subscription"] = subscription
                 extra_messages.append(extra_message)
-        else:
-            extra_messages = None
         result = await self._send_message(
             message,
             additional_messages=extra_messages,
             consume_server_errors=True)
         self._subscribe_on_connect = not result["successful"]
         return result
+
+    def _connect_done(self, future):
+        """Consume the result of the *future* and follow the server's \
+        connection advice if the transport is still connected
+
+        :param asyncio.Future future: A :obj:`_connect` or :obj:`_handshake` \
+        future
+        """
+        try:
+            result = future.result()
+            reconnect_timeout = self._reconnect_advice["interval"]
+        except Exception as error:
+            result = error
+            reconnect_timeout = self._reconnect_timeout
+
+        log_fmt = "Connect task finished with: {!r}"
+        logger.debug(log_fmt.format(result))
+
+        if self.state != TransportState.DISCONNECTING:
+            self._follow_advice(reconnect_timeout)
+
+    def _follow_advice(self, reconnect_timeout):
+        """Follow the server's reconnect advice
+
+        Either a :obj:`_connect` or :obj:`_handshake` operation is started
+        based on the advice or the method returns without starting any
+        operation if no advice is provided.
+
+        :param reconnect_timeout: Initial connection delay to pass to \
+        :obj:`_connect` or :obj:`_handshake`.
+        """
+        advice = self._reconnect_advice.get("reconnect")
+        # do a handshake operation if advised
+        if advice == "handshake":
+            self._start_connect_task(self._handshake([self.NAME],
+                                                     delay=reconnect_timeout))
+        # do a connect operation if advised
+        elif advice == "retry":
+            self._start_connect_task(self._connect(delay=reconnect_timeout))
+        # there is not reconnect advice from the server or its value
+        # is none
+        else:
+            logger.debug("No reconnect advice provided, no more operations "
+                         "will be scheduled.")
