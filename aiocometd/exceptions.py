@@ -58,9 +58,9 @@ class ServerError(AiocometdException):
             # return the error message as a string even if it's empty
             # if the third part can't be matched, then it must be and invalid
             # message, return None
-            error_parts = self.error.split(":")
-            if len(error_parts) > 2:
-                return error_parts[2]
+            match = re.search(r"(?<=:)[^:]*$", self.error)
+            if match:
+                return match[0]
         return None
 
     @property
@@ -70,14 +70,14 @@ class ServerError(AiocometdException):
         if self.error is not None:
             # if the second part can't be matched, then it must be and invalid
             # message, return None
-            error_parts = self.error.split(":")
-            if len(error_parts) > 1:
+            match = re.search(r"(?<=:).*(?=:)", self.error)
+            if match:
                 # if the second part is not empty, then return the arguments as
                 # a list, on empty second part return an empty list (to signal
                 # that the args part exists in the error string, but it's
                 # empty)
-                if error_parts[1]:
-                    return error_parts[1].split(",")
+                if match[0]:
+                    return match[0].split(",")
                 else:
                     return []
         return None
