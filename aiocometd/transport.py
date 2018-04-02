@@ -24,6 +24,24 @@ class LongPollingTransport:
         "minimumVersion": "1.0",
         "id": None
     }
+    #: Connect message template
+    _CONNECT_MESSAGE = {
+        # mandatory
+        "channel": "/meta/connect",
+        "clientId": None,
+        "connectionType": "long-polling",
+        # optional
+        "id": None
+    }
+    #: Subscribe message template
+    _SUBSCRIBE_MESSAGE = {
+        # mandatory
+        "channel": "/meta/subscribe",
+        "clientId": None,
+        "subscription": None,
+        # optional
+        "id": None
+    }
 
     def __init__(self, *, endpoint, incoming_queue, loop=None):
         """
@@ -49,6 +67,15 @@ class LongPollingTransport:
         self._http_session = None
         #: reconnection advice parameters returned by the server
         self._reconnect_advice = None
+        #: set of subscribed channels
+        self._subscriptions = set()
+        #: boolean to mark whether to resubscribe on connect
+        self._subscribe_on_connect = False
+
+    @property
+    def subscriptions(self):
+        """Set of subscribed channels"""
+        return self._subscriptions
 
     async def handshake(self, connection_types):
         """Executes the handshake operation
@@ -72,7 +99,9 @@ class LongPollingTransport:
                                      supportedConnectionTypes=connection_types)
         # store the returned client id or set it to None if it's not in the
         # response
-        self.client_id = response_message.get("clientId")
+        if response_message["successful"]:
+            self.client_id = response_message.get("clientId")
+            self._subscribe_on_connect = True
         return response_message
 
     async def _get_http_session(self):
@@ -221,4 +250,26 @@ class LongPollingTransport:
                     not message["channel"].startswith("/service/") and
                     "data" in message):
                 await self.incoming_queue.put(message)
+        return result
+
+    async def _connect(self):
+        """Connect to the server
+
+        :return: Connect response
+        :rtype: dict
+        """
+        message = self._CONNECT_MESSAGE.copy()
+        if self._subscribe_on_connect and self.subscriptions:
+            extra_messages = []
+            for subscription in self.subscriptions:
+                extra_message = self._SUBSCRIBE_MESSAGE.copy()
+                extra_message["subscription"] = subscription
+                extra_messages.append(extra_message)
+        else:
+            extra_messages = None
+        result = await self._send_message(
+            message,
+            additional_messages=extra_messages,
+            consume_server_errors=True)
+        self._subscribe_on_connect = not result["successful"]
         return result

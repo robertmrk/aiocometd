@@ -416,7 +416,8 @@ class TestLongPollingTransport(TestCase):
     async def test_handshake(self):
         connection_types = ["type1"]
         response = {
-            "clientId": "id1"
+            "clientId": "id1",
+            "successful": True
         }
         self.transport._send_message = \
             mock.CoroutineMock(return_value=response)
@@ -427,6 +428,7 @@ class TestLongPollingTransport(TestCase):
             "minimumVersion": "1.0",
             "id": None
         }
+        self.transport._subscribe_on_connect = False
 
         result = await self.transport.handshake(connection_types)
 
@@ -435,3 +437,113 @@ class TestLongPollingTransport(TestCase):
             message,
             supportedConnectionTypes=connection_types + ["long-polling"])
         self.assertEqual(self.transport.client_id, response["clientId"])
+        self.assertTrue(self.transport._subscribe_on_connect)
+
+    async def test_handshake_failure(self):
+        connection_types = ["type1"]
+        response = {
+            "clientId": "id1",
+            "successful": False
+        }
+        self.transport._send_message = \
+            mock.CoroutineMock(return_value=response)
+        message = {
+            "channel": "/meta/handshake",
+            "version": "1.0",
+            "supportedConnectionTypes": None,
+            "minimumVersion": "1.0",
+            "id": None
+        }
+        self.transport._subscribe_on_connect = False
+
+        result = await self.transport.handshake(connection_types)
+
+        self.assertEqual(result, response)
+        self.transport._send_message.assert_called_with(
+            message,
+            supportedConnectionTypes=connection_types + ["long-polling"])
+        self.assertEqual(self.transport.client_id, None)
+        self.assertFalse(self.transport._subscribe_on_connect)
+
+    def test_subscriptions(self):
+        self.assertIs(self.transport.subscriptions,
+                      self.transport._subscriptions)
+
+    def test_subscriptions_read_only(self):
+        with self.assertRaises(AttributeError):
+            self.transport.subscriptions = {"channel1", "channel2"}
+
+    async def test_connect(self):
+        self.transport._subscribe_on_connect = False
+        response = {
+            "channel": "/meta/connect",
+            "successful": True,
+            "advice": {"interval": 0, "reconnect": "retry"},
+            "id": "2"
+        }
+        self.transport._send_message = \
+            mock.CoroutineMock(return_value=response)
+
+        result = await self.transport._connect()
+
+        self.assertEqual(result, response)
+        self.transport._send_message.assert_called_with(
+            self.transport._CONNECT_MESSAGE,
+            additional_messages=None,
+            consume_server_errors=True
+        )
+        self.assertFalse(self.transport._subscribe_on_connect)
+
+    async def test_connect_subscribe_on_connect(self):
+        self.transport._subscribe_on_connect = True
+        self.transport._subscriptions = {"/test/channel1", "/test/channel2"}
+        response = {
+            "channel": "/meta/connect",
+            "successful": True,
+            "advice": {"interval": 0, "reconnect": "retry"},
+            "id": "2"
+        }
+        additional_messages = []
+        for subscription in self.transport.subscriptions:
+            message = self.transport._SUBSCRIBE_MESSAGE.copy()
+            message["subscription"] = subscription
+            additional_messages.append(message)
+        self.transport._send_message = \
+            mock.CoroutineMock(return_value=response)
+
+        result = await self.transport._connect()
+
+        self.assertEqual(result, response)
+        self.transport._send_message.assert_called_with(
+            self.transport._CONNECT_MESSAGE,
+            additional_messages=additional_messages,
+            consume_server_errors=True
+        )
+        self.assertFalse(self.transport._subscribe_on_connect)
+
+    async def test_connect_subscribe_on_connect_error(self):
+        self.transport._subscribe_on_connect = True
+        self.transport._subscriptions = {"/test/channel1", "/test/channel2"}
+        response = {
+            "channel": "/meta/connect",
+            "successful": False,
+            "advice": {"interval": 0, "reconnect": "retry"},
+            "id": "2"
+        }
+        additional_messages = []
+        for subscription in self.transport.subscriptions:
+            message = self.transport._SUBSCRIBE_MESSAGE.copy()
+            message["subscription"] = subscription
+            additional_messages.append(message)
+        self.transport._send_message = \
+            mock.CoroutineMock(return_value=response)
+
+        result = await self.transport._connect()
+
+        self.assertEqual(result, response)
+        self.transport._send_message.assert_called_with(
+            self.transport._CONNECT_MESSAGE,
+            additional_messages=additional_messages,
+            consume_server_errors=True
+        )
+        self.assertTrue(self.transport._subscribe_on_connect)
