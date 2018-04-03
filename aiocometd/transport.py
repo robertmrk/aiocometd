@@ -72,16 +72,19 @@ class LongPollingTransport:
                      :func:`asyncio.get_event_loop` is used to get the default
                      event loop.
         """
-        self.endpoint = endpoint
+        #: queue for consuming incoming event messages
         self.incoming_queue = incoming_queue
-        self.loop = loop or asyncio.get_event_loop()
-        #: clinetId value assigned by the server
-        self.client_id = None
+        #: CometD service endpoint
+        self._endpoint = endpoint
+        #: event loop used to schedule tasks
+        self._loop = loop or asyncio.get_event_loop()
+        #: clinet id value assigned by the server
+        self._client_id = None
         #: message id which should be unique for every message during a client
         #: session
         self._message_id = 0
         #: semaphore to limit the number of concurrent HTTP connections to 2
-        self._http_semaphore = asyncio.Semaphore(2, loop=self.loop)
+        self._http_semaphore = asyncio.Semaphore(2, loop=self._loop)
         #: http session
         self._http_session = None
         #: reconnection advice parameters returned by the server
@@ -96,6 +99,16 @@ class LongPollingTransport:
         self._connect_task = None
         #: time to wait before reconnecting after a network failure
         self._reconnect_timeout = reconnection_timeout
+
+    @property
+    def endpoint(self):
+        """CometD service endpoint"""
+        return self._endpoint
+
+    @property
+    def client_id(self):
+        """clinet id value assigned by the server"""
+        return self._client_id
 
     @property
     def state(self):
@@ -126,7 +139,7 @@ class LongPollingTransport:
         :rtype: dict
         """
         if delay:
-            await asyncio.sleep(delay, loop=self.loop)
+            await asyncio.sleep(delay, loop=self._loop)
         # reset message id for a new client session
         self._message_id = 0
 
@@ -143,7 +156,7 @@ class LongPollingTransport:
         # store the returned client id or set it to None if it's not in the
         # response
         if response_message["successful"]:
-            self.client_id = response_message.get("clientId")
+            self._client_id = response_message.get("clientId")
             self._subscribe_on_connect = True
         return response_message
 
@@ -217,7 +230,7 @@ class LongPollingTransport:
         try:
             session = await self._get_http_session()
             async with self._http_semaphore:
-                response = await session.post(self.endpoint, json=payload)
+                response = await session.post(self._endpoint, json=payload)
             response_payload = await response.json()
         except aiohttp.client_exceptions.ClientError as error:
             logger.debug("Failed to send payload, {}".format(error))
@@ -304,7 +317,7 @@ class LongPollingTransport:
         :param coro: Coroutine
         :return: Future
         """
-        self._connect_task = asyncio.ensure_future(coro, loop=self.loop)
+        self._connect_task = asyncio.ensure_future(coro, loop=self._loop)
         self._connect_task.add_done_callback(self._connect_done)
         return self._connect_task
 
@@ -337,7 +350,7 @@ class LongPollingTransport:
             return await asyncio.wait_for(
                 self._start_connect_task(self._connect()),
                 timeout=connection_timeout,
-                loop=self.loop)
+                loop=self._loop)
         except asyncio.TimeoutError:
             raise TransportTimeoutError("Failed to establish connection "
                                         "within the given timeout.")
@@ -351,7 +364,7 @@ class LongPollingTransport:
         :rtype: dict
         """
         if delay:
-            await asyncio.sleep(delay, loop=self.loop)
+            await asyncio.sleep(delay, loop=self._loop)
         message = self._CONNECT_MESSAGE.copy()
         extra_messages = None
         if self._subscribe_on_connect and self.subscriptions:
