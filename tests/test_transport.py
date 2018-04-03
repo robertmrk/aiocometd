@@ -328,10 +328,27 @@ class TestLongPollingTransport(TestCase):
             {
                 "channel": "/service/test",
                 "successful": False,
-                "id": "3"
+                "id": "6"
+            },
+            # unsubscribe confirmation, success
+            {
+                "channel": "/meta/unsubscribe",
+                "subscription": "/test/channel3",
+                "successful": True,
+                "id": "7"
+            },
+            # unsubscribe confirmation, failure
+            {
+                "channel": "/meta/unsubscribe",
+                "subscription": "/test/channel4",
+                "successful": False,
+                "id": "8"
             }
         ]
         self.transport.incoming_queue = asyncio.Queue()
+        self.transport._subscriptions = {"/test/channel2",
+                                         "/test/channel3",
+                                         "/test/channel4"}
 
         result = await self.transport._consume_payload(payload)
 
@@ -342,6 +359,8 @@ class TestLongPollingTransport(TestCase):
         while not self.transport.incoming_queue.empty():
             consumed_messages.append(await self.transport.incoming_queue.get())
         self.assertEqual(consumed_messages, [payload[0]])
+        self.assertEqual(self.transport.subscriptions,
+                         {"/test/channel1", "/test/channel4"})
 
     async def test_consume_payload_with_confirm_and_subscription(self):
         message = {
@@ -388,10 +407,27 @@ class TestLongPollingTransport(TestCase):
             {
                 "channel": "/service/test",
                 "successful": False,
-                "id": "3"
+                "id": "6"
+            },
+            # unsubscribe confirmation, success
+            {
+                "channel": "/meta/unsubscribe",
+                "subscription": "/test/channel3",
+                "successful": True,
+                "id": "7"
+            },
+            # unsubscribe confirmation, failure
+            {
+                "channel": "/meta/unsubscribe",
+                "subscription": "/test/channel4",
+                "successful": False,
+                "id": "8"
             }
         ]
         self.transport.incoming_queue = asyncio.Queue()
+        self.transport._subscriptions = {"/test/channel2",
+                                         "/test/channel3",
+                                         "/test/channel4"}
 
         result = \
             await self.transport._consume_payload(payload,
@@ -405,12 +441,16 @@ class TestLongPollingTransport(TestCase):
         consumed_messages = []
         while not self.transport.incoming_queue.empty():
             consumed_messages.append(await self.transport.incoming_queue.get())
-        self.assertEqual(len(consumed_messages), 3)
+        self.assertEqual(len(consumed_messages), 4)
         self.assertEqual(consumed_messages[0], payload[0])
         self.assertIsInstance(consumed_messages[1], ServerError)
         self.assertEqual(consumed_messages[1].message, payload[3])
         self.assertIsInstance(consumed_messages[2], ServerError)
         self.assertEqual(consumed_messages[2].message, payload[5])
+        self.assertIsInstance(consumed_messages[3], ServerError)
+        self.assertEqual(consumed_messages[3].message, payload[7])
+        self.assertEqual(self.transport.subscriptions,
+                         {"/test/channel1", "/test/channel4"})
 
     async def test_send_message(self):
         message = {
@@ -916,3 +956,67 @@ class TestLongPollingTransport(TestCase):
                 self.transport._stop_connect_task.assert_not_called()
                 self.transport._send_message.assert_not_called()
                 self.transport._close_http_session.assert_not_called()
+
+    async def test_subscribe(self):
+        for state in [TransportState.CONNECTED, TransportState.CONNECTING]:
+            self.transport._state = state
+            self.transport._send_message = mock.CoroutineMock(
+                return_value="result"
+            )
+
+            result = await self.transport.subscribe("channel")
+
+            self.assertEqual(result,
+                             self.transport._send_message.return_value)
+            self.transport._send_message.assert_called_with(
+                self.transport._SUBSCRIBE_MESSAGE,
+                subscription="channel"
+            )
+
+    async def test_subscribe_error_if_not_connected(self):
+        for state in TransportState:
+            if state not in [TransportState.CONNECTED,
+                             TransportState.CONNECTING]:
+                self.transport._state = state
+                self.transport._send_message = mock.CoroutineMock(
+                    return_value="result"
+                )
+
+                with self.assertRaisesRegex(TransportInvalidOperation,
+                                            "Can't subscribe without being "
+                                            "connected to a server."):
+                    await self.transport.subscribe("channel")
+
+                self.transport._send_message.assert_not_called()
+
+    async def test_unsubscribe(self):
+        for state in [TransportState.CONNECTED, TransportState.CONNECTING]:
+            self.transport._state = state
+            self.transport._send_message = mock.CoroutineMock(
+                return_value="result"
+            )
+
+            result = await self.transport.unsubscribe("channel")
+
+            self.assertEqual(result,
+                             self.transport._send_message.return_value)
+            self.transport._send_message.assert_called_with(
+                self.transport._UNSUBSCRIBE_MESSAGE,
+                subscription="channel"
+            )
+
+    async def test_unsubscribe_error_if_not_connected(self):
+        for state in TransportState:
+            if state not in [TransportState.CONNECTED,
+                             TransportState.CONNECTING]:
+                self.transport._state = state
+                self.transport._send_message = mock.CoroutineMock(
+                    return_value="result"
+                )
+
+                with self.assertRaisesRegex(TransportInvalidOperation,
+                                            "Can't unsubscribe without being "
+                                            "connected to a server."):
+                    await self.transport.unsubscribe("channel")
+
+                self.transport._send_message.assert_not_called()

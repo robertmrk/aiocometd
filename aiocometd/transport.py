@@ -65,6 +65,15 @@ class LongPollingTransport:
         # optional
         "id": None
     }
+    #: Unsubscribe message template
+    _UNSUBSCRIBE_MESSAGE = {
+        # mandatory
+        "channel": "/meta/unsubscribe",
+        "clientId": None,
+        "subscription": None,
+        # optional
+        "id": None
+    }
     #: Timeout to give to HTTP session to close itself
     _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
@@ -303,6 +312,23 @@ class LongPollingTransport:
             if "advice" in message:
                 self._reconnect_advice = message["advice"]
 
+            # if a subscription response is successful, then add the channel
+            # to the set of subscriptions, if it fails, then remove it
+            if message["channel"] == "/meta/subscribe":
+                if (message["successful"] and
+                        message["subscription"] not in self._subscriptions):
+                    self._subscriptions.add(message["subscription"])
+                elif (not message["successful"] and
+                      message["subscription"] in self._subscriptions):
+                    self._subscriptions.remove(message["subscription"])
+
+            # if an unsubscribe response is successful then remove the channel
+            # from the set of subscriptions
+            if message["channel"] == "/meta/unsubscribe":
+                if (message["successful"] and
+                        message["subscription"] in self._subscriptions):
+                    self._subscriptions.remove(message["subscription"])
+
             # if enabled, consume server side error messages and enqueue them
             # as ServerErrors
             if (consume_server_errors and
@@ -471,3 +497,31 @@ class LongPollingTransport:
             await self._send_message(self._DISCONNECT_MESSAGE.copy())
             await self._close_http_session()
             self._state = TransportState.DISCONNECTED
+
+    async def subscribe(self, channel):
+        """Subscribe to *channel*
+
+        :param str channel: Name of the channel
+        :return: Subscribe response
+        :rtype: dict
+        """
+        if self.state not in [TransportState.CONNECTING,
+                              TransportState.CONNECTED]:
+            raise TransportInvalidOperation(
+                "Can't subscribe without being connected to a server.")
+        return await self._send_message(self._SUBSCRIBE_MESSAGE.copy(),
+                                        subscription=channel)
+
+    async def unsubscribe(self, channel):
+        """Unsubscribe from *channel*
+
+        :param str channel: Name of the channel
+        :return: Unsubscribe response
+        :rtype: dict
+        """
+        if self.state not in [TransportState.CONNECTING,
+                              TransportState.CONNECTED]:
+            raise TransportInvalidOperation(
+                "Can't unsubscribe without being connected to a server.")
+        return await self._send_message(self._UNSUBSCRIBE_MESSAGE.copy(),
+                                        subscription=channel)
