@@ -286,7 +286,7 @@ class LongPollingTransport:
 
     async def _consume_payload(self, payload, *, confirm_for=None,
                                consume_server_errors=False):
-        """Enqueu event messages for the consumers and update the internal
+        """Enqueue event messages for the consumers and update the internal
         state of the transport, based on response messages in the *payload*.
 
         :param payload: A list of response messages
@@ -389,7 +389,7 @@ class LongPollingTransport:
         the time specified by *connection_timeout*.
         :raise TransportInvalidOperation: If the transport doesn't has a \
         client id yet, or if it's not in a :obj:`~TransportState.DISCONNECTED`\
-        state.
+        :obj:`state`.
         """
         if not self.client_id:
             raise TransportInvalidOperation(
@@ -504,6 +504,9 @@ class LongPollingTransport:
         :param str channel: Name of the channel
         :return: Subscribe response
         :rtype: dict
+        :raise TransportInvalidOperation: If the transport is not in the \
+        :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
+        :obj:`state`
         """
         if self.state not in [TransportState.CONNECTING,
                               TransportState.CONNECTED]:
@@ -518,6 +521,9 @@ class LongPollingTransport:
         :param str channel: Name of the channel
         :return: Unsubscribe response
         :rtype: dict
+        :raise TransportInvalidOperation: If the transport is not in the \
+        :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
+        :obj:`state`
         """
         if self.state not in [TransportState.CONNECTING,
                               TransportState.CONNECTED]:
