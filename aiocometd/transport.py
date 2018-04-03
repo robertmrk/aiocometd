@@ -410,3 +410,4 @@ class LongPollingTransport:
         else:
             logger.debug("No reconnect advice provided, no more operations "
                          "will be scheduled.")
+            self._state = TransportState.DISCONNECTED

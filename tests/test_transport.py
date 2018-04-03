@@ -797,6 +797,7 @@ class TestLongPollingTransport(TestCase):
     def test_follow_advice_none(self):
         advices = ["none", "", None]
         for advice in advices:
+            self.transport._state = TransportState.CONNECTED
             self.transport._reconnect_advice = {
                 "interval": 1,
                 "reconnect": advice
@@ -815,3 +816,4 @@ class TestLongPollingTransport(TestCase):
             self.transport._handshake.assert_not_called()
             self.transport._connect.assert_not_called()
             self.transport._start_connect_task.assert_not_called()
+            self.assertEqual(self.transport.state, TransportState.DISCONNECTED)
