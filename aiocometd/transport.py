@@ -48,6 +48,14 @@ class LongPollingTransport:
         # optional
         "id": None
     }
+    #: Disconnect message template
+    _DISCONNECT_MESSAGE = {
+        # mandatory
+        "channel": "/meta/disconnect",
+        "clientId": None,
+        # optional
+        "id": None
+    }
     #: Subscribe message template
     _SUBSCRIBE_MESSAGE = {
         # mandatory
@@ -57,6 +65,8 @@ class LongPollingTransport:
         # optional
         "id": None
     }
+    #: Timeout to give to HTTP session to close itself
+    _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
     def __init__(self, *, endpoint, incoming_queue, reconnection_timeout=1,
                  loop=None):
@@ -173,6 +183,14 @@ class LongPollingTransport:
         if self._http_session is None:
             self._http_session = aiohttp.ClientSession()
         return self._http_session
+
+    async def _close_http_session(self):
+        """Close the http session if it's not already closed"""
+        # graceful shutdown recommended by the documentation
+        # https://aiohttp.readthedocs.io/en/stable/client_advanced.html#graceful-shutdown
+        if self._http_session is not None and not self._http_session.closed:
+            await self._http_session.close()
+            await asyncio.sleep(self._HTTP_SESSION_CLOSE_TIMEOUT)
 
     def _finalize_message(self, message):
         """Update the ``id`` and ``clientId`` message fields as a side effect
@@ -321,6 +339,15 @@ class LongPollingTransport:
         self._connect_task.add_done_callback(self._connect_done)
         return self._connect_task
 
+    async def _stop_connect_task(self):
+        """Stop the connection task
+
+        If no connect task exists or if it's done it does nothing.
+        """
+        if self._connect_task and not self._connect_task.done():
+            self._connect_task.cancel()
+            await asyncio.wait([self._connect_task])
+
     async def connect(self, connection_timeout=None):
         """Connect to the server
 
@@ -346,12 +373,14 @@ class LongPollingTransport:
             raise TransportInvalidOperation(
                 "Can't connect to a server without disconnecting first.")
 
+        self._state = TransportState.CONNECTING
         try:
             return await asyncio.wait_for(
                 self._start_connect_task(self._connect()),
                 timeout=connection_timeout,
                 loop=self._loop)
         except asyncio.TimeoutError:
+            self._state = TransportState.DISCONNECTED
             raise TransportTimeoutError("Failed to establish connection "
                                         "within the given timeout.")
 
@@ -390,9 +419,13 @@ class LongPollingTransport:
         try:
             result = future.result()
             reconnect_timeout = self._reconnect_advice["interval"]
+            if self.state == TransportState.CONNECTING:
+                self._state = TransportState.CONNECTED
         except Exception as error:
             result = error
             reconnect_timeout = self._reconnect_timeout
+            if self.state == TransportState.CONNECTED:
+                self._state = TransportState.CONNECTING
 
         log_fmt = "Connect task finished with: {!r}"
         logger.debug(log_fmt.format(result))
@@ -423,4 +456,18 @@ class LongPollingTransport:
         else:
             logger.debug("No reconnect advice provided, no more operations "
                          "will be scheduled.")
+            self._state = TransportState.DISCONNECTED
+
+    async def disconnect(self):
+        """Disconnect from server
+
+        If the transport is not connected to the server this method does
+        nothing.
+        """
+        if self.state in [TransportState.CONNECTING,
+                          TransportState.CONNECTED]:
+            self._state = TransportState.DISCONNECTING
+            await self._stop_connect_task()
+            await self._send_message(self._DISCONNECT_MESSAGE.copy())
+            await self._close_http_session()
             self._state = TransportState.DISCONNECTED
