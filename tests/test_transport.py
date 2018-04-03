@@ -1020,3 +1020,36 @@ class TestLongPollingTransport(TestCase):
                     await self.transport.unsubscribe("channel")
 
                 self.transport._send_message.assert_not_called()
+
+    async def test_publish(self):
+        for state in [TransportState.CONNECTED, TransportState.CONNECTING]:
+            self.transport._state = state
+            self.transport._send_message = mock.CoroutineMock(
+                return_value="result"
+            )
+
+            result = await self.transport.publish("channel", {})
+
+            self.assertEqual(result,
+                             self.transport._send_message.return_value)
+            self.transport._send_message.assert_called_with(
+                self.transport._PUBLISH_MESSAGE,
+                channel="channel",
+                data={}
+            )
+
+    async def test_publish_error_if_not_connected(self):
+        for state in TransportState:
+            if state not in [TransportState.CONNECTED,
+                             TransportState.CONNECTING]:
+                self.transport._state = state
+                self.transport._send_message = mock.CoroutineMock(
+                    return_value="result"
+                )
+
+                with self.assertRaisesRegex(TransportInvalidOperation,
+                                            "Can't publish without being "
+                                            "connected to a server."):
+                    await self.transport.publish("channel", {})
+
+                self.transport._send_message.assert_not_called()

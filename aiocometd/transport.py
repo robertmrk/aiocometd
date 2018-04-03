@@ -74,6 +74,15 @@ class LongPollingTransport:
         # optional
         "id": None
     }
+    #: Publish message template
+    _PUBLISH_MESSAGE = {
+        # mandatory
+        "channel": None,
+        "clientId": None,
+        "data": None,
+        # optional
+        "id": None
+    }
     #: Timeout to give to HTTP session to close itself
     _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
@@ -531,3 +540,22 @@ class LongPollingTransport:
                 "Can't unsubscribe without being connected to a server.")
         return await self._send_message(self._UNSUBSCRIBE_MESSAGE.copy(),
                                         subscription=channel)
+
+    async def publish(self, channel, data):
+        """Publish *data* to the given *channel*
+
+        :param str channel: Name of the channel
+        :param dict data: Data to send to the server
+        :return: Publish response
+        :rtype: dict
+        :raise TransportInvalidOperation: If the transport is not in the \
+        :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
+        :obj:`state`
+        """
+        if self.state not in [TransportState.CONNECTING,
+                              TransportState.CONNECTED]:
+            raise TransportInvalidOperation(
+                "Can't publish without being connected to a server.")
+        return await self._send_message(self._PUBLISH_MESSAGE.copy(),
+                                        channel=channel,
+                                        data=data)
