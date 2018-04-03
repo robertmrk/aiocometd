@@ -237,10 +237,15 @@ class LongPollingTransport:
         else:
             self._finalize_message(payload)
 
-    async def _send_message(self, message, **kwargs):
+    async def _send_message(self, message, additional_messages=None, **kwargs):
         """Send message to server
 
         :param dict message: A finalized or a template message
+        :param additional_messages: An optional list of additional messages \
+        to send along with the main *message* in the same payload. \
+        Note that the options in *kwargs* will not be applied to these \
+        messages, they should be prepared in advance.
+        :type additional_messages: list[dict] or None
         :param kwargs: Optional key-value pairs that'll be used to update the \
         the values in the *message*
         :return: Response message
@@ -248,7 +253,11 @@ class LongPollingTransport:
         :raises TransportError: When the HTTP request fails.
         """
         message.update(kwargs)
-        response_payload = await self._send_payload(message)
+        if additional_messages:
+            payload = [message] + additional_messages
+        else:
+            payload = message
+        response_payload = await self._send_payload(payload)
         return await self._consume_payload(response_payload,
                                            confirm_for=message)
 

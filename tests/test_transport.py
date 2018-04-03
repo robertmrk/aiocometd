@@ -477,6 +477,42 @@ class TestLongPollingTransport(TestCase):
         self.transport._consume_payload.assert_called_with(response_payload,
                                                            confirm_for=message)
 
+    async def test_send_message_with_additional_messages(self):
+        message = {
+            "channel": "/test/channel1",
+            "data": {},
+            "clientId": None,
+            "id": "1"
+        }
+        additional_messages = [
+            {
+                "channel": "/test/channel2",
+                "data": {},
+                "clientId": None,
+                "id": "2"
+            }
+        ]
+        response = object()
+        response_payload = object()
+        self.transport._send_payload = \
+            mock.CoroutineMock(return_value=response_payload)
+        self.transport._consume_payload = \
+            mock.CoroutineMock(return_value=response)
+
+        result = await self.transport._send_message(
+            message,
+            additional_messages=additional_messages,
+            clientId="fake_id",
+            id="2")
+
+        self.assertIs(result, response)
+        self.assertEqual(message["clientId"], "fake_id")
+        self.assertEqual(message["id"], "2")
+        self.transport._send_payload.assert_called_with(
+            [message] + additional_messages)
+        self.transport._consume_payload.assert_called_with(response_payload,
+                                                           confirm_for=message)
+
     @mock.patch("aiocometd.transport.asyncio.sleep")
     async def test_handshake(self, sleep):
         connection_types = ["type1"]
