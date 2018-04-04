@@ -4,8 +4,8 @@ from asynctest import TestCase, mock
 from aiohttp import ClientSession, client_exceptions
 
 from aiocometd.transport import LongPollingTransport, TransportState
-from aiocometd.exceptions import TransportError, ServerError, \
-    TransportInvalidOperation, TransportTimeoutError
+from aiocometd.exceptions import TransportError, TransportInvalidOperation, \
+    TransportTimeoutError
 
 
 class TestLongPollingTransport(TestCase):
@@ -443,12 +443,9 @@ class TestLongPollingTransport(TestCase):
             consumed_messages.append(await self.transport.incoming_queue.get())
         self.assertEqual(len(consumed_messages), 4)
         self.assertEqual(consumed_messages[0], payload[0])
-        self.assertIsInstance(consumed_messages[1], ServerError)
-        self.assertEqual(consumed_messages[1].message, payload[3])
-        self.assertIsInstance(consumed_messages[2], ServerError)
-        self.assertEqual(consumed_messages[2].message, payload[5])
-        self.assertIsInstance(consumed_messages[3], ServerError)
-        self.assertEqual(consumed_messages[3].message, payload[7])
+        self.assertEqual(consumed_messages[1], payload[3])
+        self.assertEqual(consumed_messages[2], payload[5])
+        self.assertEqual(consumed_messages[3], payload[7])
         self.assertEqual(self.transport.subscriptions,
                          {"/test/channel1", "/test/channel4"})
 

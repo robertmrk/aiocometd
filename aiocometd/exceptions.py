@@ -96,3 +96,8 @@ class ServerError(AiocometdException):
 
 class ClientError(AiocometdException):
     """ComtedD client side error"""
+
+
+class ClientInvalidOperation(ClientError):
+    """The requested operation can't be executed on the current state of the
+    client"""

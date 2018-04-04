@@ -5,8 +5,8 @@ from enum import Enum, unique, auto
 
 import aiohttp
 
-from .exceptions import TransportError, ServerError, \
-    TransportInvalidOperation, TransportTimeoutError
+from .exceptions import TransportError, TransportInvalidOperation, \
+    TransportTimeoutError
 
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ class LongPollingTransport:
     def __init__(self, *, endpoint, incoming_queue, reconnection_timeout=1,
                  loop=None):
         """
-        :param str endpoint: CometD service endpoint
+        :param str endpoint: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
                                              messages
         :param reconnection_timeout: The time to wait before trying to \
@@ -102,7 +102,7 @@ class LongPollingTransport:
         """
         #: queue for consuming incoming event messages
         self.incoming_queue = incoming_queue
-        #: CometD service endpoint
+        #: CometD service url
         self._endpoint = endpoint
         #: event loop used to schedule tasks
         self._loop = loop or asyncio.get_event_loop()
@@ -130,7 +130,7 @@ class LongPollingTransport:
 
     @property
     def endpoint(self):
-        """CometD service endpoint"""
+        """CometD service url"""
         return self._endpoint
 
     @property
@@ -313,11 +313,10 @@ class LongPollingTransport:
         the given *confirm_for* message.
         :param bool consume_server_errors: Consume server side error \
         messages which could not or should not be handled by the transport. \
-        Let the consumers decide how to deal with them. (these errrors are \
+        Let the consumers decide how to deal with them. (these errors are \
         failed confirmation messages for all channels except \
         ``/meta/connect``, ``/meta/disconnect`` and ``/meta/handshake``). \
-        If it's True, then these messages will be enqueued for consumers as \
-        :obj:`ServerError` objects.
+        If it's True, then these messages will be enqueued for consumers.
         :return: The confirmation response message for the *confirm_for*
                  message, otherwise ``None``
         :rtype: dict or None
@@ -354,7 +353,7 @@ class LongPollingTransport:
                     message["channel"] != "/meta/disconnect" and
                     message["channel"] != "/meta/handshake" and
                     not message.get("successful", True)):
-                await self.incoming_queue.put(ServerError(message))
+                await self.incoming_queue.put(message)
 
             # check if the message is the confirmation response we're looking
             # for, if yes then set it as the result and continue
