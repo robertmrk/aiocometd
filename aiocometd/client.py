@@ -1,5 +1,6 @@
 """Client class implementation"""
 import asyncio
+import reprlib
 
 from . import transport
 from .exceptions import ServerError, ClientInvalidOperation
@@ -25,6 +26,14 @@ class Client:
         self._transport = None
         #: marks whether the client is open or closed
         self._closed = True
+
+    def __repr__(self):
+        """Formal string representation"""
+        cls_name = type(self).__name__
+        fmt_spec = "{}(endpoint={}, loop={})"
+        return fmt_spec.format(cls_name,
+                               reprlib.repr(self.endpoint),
+                               reprlib.repr(self._loop))
 
     @property
     def closed(self):

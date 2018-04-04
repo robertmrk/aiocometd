@@ -1,4 +1,5 @@
 import asyncio
+import reprlib
 
 from asynctest import TestCase, mock
 
@@ -322,3 +323,14 @@ class TestClient(TestCase):
             await self.client.publish("channel1", data)
 
         self.client._transport.publish.assert_called_with("channel1", data)
+
+    def test_repr(self):
+        self.client.endpoint = "http://example.com"
+        expected = "Client(endpoint={}, loop={})".format(
+            reprlib.repr(self.client.endpoint),
+            reprlib.repr(self.client._loop)
+        )
+
+        result = repr(self.client)
+
+        self.assertEqual(result, expected)
