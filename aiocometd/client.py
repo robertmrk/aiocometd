@@ -8,6 +8,15 @@ from .exceptions import ServerError, ClientInvalidOperation
 
 class Client:
     """CometD client"""
+    #: Predefined server error messages by channel name
+    _SERVER_ERROR_MESSAGES = {
+        "/meta/handshake": "Handshake request failed.",
+        "/meta/connect": "Connect request failed.",
+        "/meta/disconnect": "Disconnect request failed.",
+        "/meta/subscribe": "Subscribe request failed.",
+        "/meta/unsubscribe": "Unsubscribe request failed."
+    }
+
     def __init__(self, endpoint, *, loop=None):
         """
         :param str endpoint: CometD service url
@@ -69,12 +78,10 @@ class Client:
         )
 
         response = await self._transport.handshake([self._transport.NAME])
-        if not response["successful"]:
-            raise ServerError("Handshake request failed.", response)
+        self._verify_response(response)
 
         response = await self._transport.connect()
-        if not response["successful"]:
-            raise ServerError("Connect request failed.", response)
+        self._verify_response(response)
         self._closed = False
 
     async def close(self):
@@ -96,8 +103,7 @@ class Client:
             raise ClientInvalidOperation("Can't send subscribe request while, "
                                          "the client is closed.")
         response = await self._transport.subscribe(channel)
-        if not response["successful"]:
-            raise ServerError("Subscribe request failed.", response)
+        self._verify_response(response)
 
     async def unsubscribe(self, channel):
         """Unsubscribe from *channel*
@@ -112,8 +118,7 @@ class Client:
             raise ClientInvalidOperation("Can't send unsubscribe request "
                                          "while, the client is closed.")
         response = await self._transport.unsubscribe(channel)
-        if not response["successful"]:
-            raise ServerError("Unsubscribe request failed.", response)
+        self._verify_response(response)
 
     async def publish(self, channel, data):
         """Publish *data* to the given *channel*
@@ -128,5 +133,68 @@ class Client:
             raise ClientInvalidOperation("Can't publish data while, "
                                          "the client is closed.")
         response = await self._transport.publish(channel, data)
-        if not response["successful"]:
-            raise ServerError("Publish request failed.", response)
+        self._verify_response(response)
+
+    def _verify_response(self, response):
+        """Check the ``successful`` status of the *response* and raise \
+        the appropriate :obj:`~aiocometd.exceptions.ServerError` if it's False
+
+        If the *response* has no ``successful`` field, it's considered to be
+        successful.
+
+        :param dict response: Response message
+        :raise ServerError: If the *response* is not ``successful``
+        """
+        if not response.get("successful", True):
+            self._raise_server_error(response)
+
+    def _raise_server_error(self, response):
+        """Raise the appropriate :obj:`~aiocometd.exceptions.ServerError` for \
+        the failed *response*
+
+        :param dict response: Response message
+        :raise ServerError: If the *response* is not ``successful``
+        """
+        channel = response["channel"]
+        message = type(self)._SERVER_ERROR_MESSAGES.get(channel)
+        if not message:
+            if channel.startswith("/service/"):
+                message = "Service request failed."
+            else:
+                message = "Publish request failed."
+        raise ServerError(message, response)
+
+    async def receive(self):
+        """Wait for incoming messages from the server
+
+        :return: Incoming message
+        :rtype: dict
+        :raise ClientInvalidOperation: If the client is closed, and has no \
+        more pending incoming messages
+        :raise ServerError: If the client receives a confirmation message \
+         which is not ``successful``
+        """
+        if not self.closed or self.has_pending_messages:
+            response = await self._incoming_queue.get()
+            self._verify_response(response)
+            return response
+        else:
+            raise ClientInvalidOperation("The client is closed and there are "
+                                         "no pending messages.")
+
+    @property
+    def pending_count(self):
+        """The number of pending incoming messages
+
+        Once :obj:`open` is called the client starts listening for messages
+        from the server. The incoming messages are retrieved and stored in an
+        internal queue until they get consumed by calling :obj:`receive`.
+        """
+        if self._incoming_queue is None:
+            return 0
+        return self._incoming_queue.qsize()
+
+    @property
+    def has_pending_messages(self):
+        """Marks whether the client has any pending incoming messages"""
+        return self.pending_count > 0

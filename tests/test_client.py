@@ -334,3 +334,138 @@ class TestClient(TestCase):
         result = repr(self.client)
 
         self.assertEqual(result, expected)
+
+    def test_verify_response_on_success(self):
+        self.client._raise_server_error = mock.MagicMock()
+        response = {
+            "channel": "/channel1",
+            "successful": True,
+            "id": "1"
+        }
+
+        self.client._verify_response(response)
+
+        self.client._raise_server_error.assert_not_called()
+
+    def test_verify_response_on_error(self):
+        self.client._raise_server_error = mock.MagicMock()
+        response = {
+            "channel": "/channel1",
+            "successful": False,
+            "id": "1"
+        }
+
+        self.client._verify_response(response)
+
+        self.client._raise_server_error.assert_called_with(response)
+
+    def test_verify_response_no_successful_status(self):
+        self.client._raise_server_error = mock.MagicMock()
+        response = {
+            "channel": "/channel1",
+            "id": "1"
+        }
+
+        self.client._verify_response(response)
+
+        self.client._raise_server_error.assert_not_called()
+
+    def test_raise_server_error_meta(self):
+        response = {
+            "channel": "/meta/subscribe",
+            "successful": False,
+            "id": "1"
+        }
+        error_message = \
+            type(self.client)._SERVER_ERROR_MESSAGES[response["channel"]]
+
+        with self.assertRaises(ServerError, msg=error_message):
+            self.client._raise_server_error(response)
+
+    def test_raise_server_error_service(self):
+        response = {
+            "channel": "/service/test",
+            "successful": False,
+            "id": "1"
+        }
+
+        with self.assertRaises(
+                ServerError,
+                msg="Service request failed."):
+            self.client._raise_server_error(response)
+
+    def test_raise_server_error_publish(self):
+        response = {
+            "channel": "/some/channel",
+            "successful": False,
+            "id": "1"
+        }
+
+        with self.assertRaises(
+                ServerError,
+                msg="Publish request failed."):
+            self.client._raise_server_error(response)
+
+    async def test_pending_count(self):
+        self.client._incoming_queue = asyncio.Queue()
+        await self.client._incoming_queue.put(1)
+        await self.client._incoming_queue.put(2)
+
+        self.assertEqual(self.client.pending_count, 2)
+
+    async def test_pending_count_if_none_queue(self):
+        self.client._incoming_queue = None
+
+        self.assertEqual(self.client.pending_count, 0)
+
+    async def test_has_pending_messages(self):
+        self.client._incoming_queue = asyncio.Queue()
+        await self.client._incoming_queue.put(1)
+
+        self.assertTrue(self.client.has_pending_messages)
+
+    async def test_has_pending_messages_false(self):
+        self.client._incoming_queue = None
+
+        self.assertFalse(self.client.has_pending_messages)
+
+    async def test_receive_on_closed(self):
+        self.client._closed = True
+        self.client._incoming_queue = None
+
+        with self.assertRaises(ClientInvalidOperation,
+                               msg="The client is closed and there are "
+                                   "no pending messages."):
+            await self.client.receive()
+
+    async def test_receive_on_closed_and_pending_messages(self):
+        self.client._closed = True
+        response = {
+            "channel": "/channel1",
+            "data": {},
+            "id": "1"
+        }
+        self.client._incoming_queue = asyncio.Queue()
+        await self.client._incoming_queue.put(response)
+        self.client._verify_response = mock.MagicMock()
+
+        result = await self.client.receive()
+
+        self.assertEqual(result, response)
+        self.client._verify_response.assert_called_with(response)
+
+    async def test_receive_on_open(self):
+        self.client._closed = False
+        response = {
+            "channel": "/channel1",
+            "data": {},
+            "id": "1"
+        }
+        self.client._incoming_queue = asyncio.Queue()
+        await self.client._incoming_queue.put(response)
+        self.client._verify_response = mock.MagicMock()
+
+        result = await self.client.receive()
+
+        self.assertEqual(result, response)
+        self.client._verify_response.assert_called_with(response)
