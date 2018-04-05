@@ -212,3 +212,11 @@ class Client:
     def has_pending_messages(self):
         """Marks whether the client has any pending incoming messages"""
         return self.pending_count > 0
+
+    async def __aiter__(self):
+        """Asynchronous iterator"""
+        while True:
+            try:
+                yield await self.receive()
+            except ClientInvalidOperation:
+                break

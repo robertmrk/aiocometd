@@ -487,3 +487,26 @@ class TestClient(TestCase):
 
         self.assertEqual(result, response)
         self.client._verify_response.assert_called_with(response)
+
+    async def test_aiter(self):
+        responses = [
+            {
+                "channel": "/channel1",
+                "data": {},
+                "id": "1"
+            },
+            {
+                "channel": "/channel2",
+                "data": {},
+                "id": "2"
+            }
+        ]
+        self.client._incoming_queue = asyncio.Queue()
+        for response in responses:
+            await self.client._incoming_queue.put(response)
+
+        result = []
+        async for message in self.client:
+            result.append(message)
+
+        self.assertEqual(result, responses)
