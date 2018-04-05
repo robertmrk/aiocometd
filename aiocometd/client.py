@@ -1,9 +1,13 @@
 """Client class implementation"""
 import asyncio
 import reprlib
+import logging
 
 from . import transport
-from .exceptions import ServerError, ClientInvalidOperation
+from .exceptions import ServerError, ClientInvalidOperation, TransportError
+
+
+logger = logging.getLogger(__name__)
 
 
 class Client:
@@ -87,7 +91,16 @@ class Client:
     async def close(self):
         """Disconnect from the CometD server"""
         if not self.closed:
-            await self._transport.disconnect()
+            try:
+                await self._transport.disconnect()
+
+            # Don't raise TransportError if disconnect fails. Event if the
+            # request fails, and the server doesn't gets notified about the
+            # disconnecting client, it will still close the server side session
+            # after a certain timeout. The important thing is that we did our
+            # best to notify the server.
+            except TransportError as error:
+                logger.debug("Disconnect request failed, {}".format(error))
             self._closed = True
 
     async def subscribe(self, channel):

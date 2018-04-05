@@ -4,7 +4,8 @@ import reprlib
 from asynctest import TestCase, mock
 
 from aiocometd.client import Client
-from aiocometd.exceptions import ServerError, ClientInvalidOperation
+from aiocometd.exceptions import ServerError, ClientInvalidOperation, \
+    TransportError
 
 
 class TestClient(TestCase):
@@ -172,7 +173,7 @@ class TestClient(TestCase):
         transport.handshake.assert_called_with([transport.NAME])
         self.assertTrue(self.client.closed)
 
-    async def test_disconnect(self):
+    async def test_close(self):
         self.client._closed = False
         self.client._transport = mock.MagicMock()
         self.client._transport.disconnect = mock.CoroutineMock()
@@ -182,7 +183,7 @@ class TestClient(TestCase):
         self.client._transport.disconnect.assert_called()
         self.assertTrue(self.client.closed)
 
-    async def test_disconnect_if_closed(self):
+    async def test_close_if_already_closed(self):
         self.client._closed = True
         self.client._transport = mock.MagicMock()
         self.client._transport.disconnect = mock.CoroutineMock()
@@ -190,6 +191,23 @@ class TestClient(TestCase):
         await self.client.close()
 
         self.client._transport.disconnect.assert_not_called()
+        self.assertTrue(self.client.closed)
+
+    async def test_close_on_transport_error(self):
+        self.client._closed = False
+        self.client._transport = mock.MagicMock()
+        error = TransportError("description")
+        self.client._transport.disconnect = mock.CoroutineMock(
+            side_effect=error
+        )
+        expected_log = ["DEBUG:aiocometd.client:"
+                        "Disconnect request failed, {}".format(error)]
+
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            await self.client.close()
+
+        self.assertEqual(log.output, expected_log)
+        self.client._transport.disconnect.assert_called()
         self.assertTrue(self.client.closed)
 
     async def test_subscribe(self):

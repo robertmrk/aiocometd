@@ -154,6 +154,7 @@ class LongPollingTransport:
         :param list[str] connection_types: list of connection types
         :return: Handshake response
         :rtype: dict
+        :raises TransportError: When the HTTP request fails.
         """
         return await self._handshake(connection_types, delay=None)
 
@@ -165,6 +166,7 @@ class LongPollingTransport:
         :type delay: None or int or float
         :return: Handshake response
         :rtype: dict
+        :raises TransportError: When the HTTP request fails.
         """
         if delay:
             await asyncio.sleep(delay, loop=self._loop)
@@ -407,6 +409,7 @@ class LongPollingTransport:
         :raise TransportInvalidOperation: If the transport doesn't has a \
         client id yet, or if it's not in a :obj:`~TransportState.DISCONNECTED`\
         :obj:`state`.
+        :raises TransportError: When the HTTP request fails.
         """
         if not self.client_id:
             raise TransportInvalidOperation(
@@ -434,6 +437,7 @@ class LongPollingTransport:
         :type delay: None or int or float
         :return: Connect response
         :rtype: dict
+        :raises TransportError: When the HTTP request fails.
         """
         if delay:
             await asyncio.sleep(delay, loop=self._loop)
@@ -506,6 +510,7 @@ class LongPollingTransport:
 
         If the transport is not connected to the server this method does
         nothing.
+        :raises TransportError: When the HTTP request fails.
         """
         if self.state in [TransportState.CONNECTING,
                           TransportState.CONNECTED]:
@@ -524,6 +529,7 @@ class LongPollingTransport:
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
+        :raises TransportError: When the HTTP request fails.
         """
         if self.state not in [TransportState.CONNECTING,
                               TransportState.CONNECTED]:
@@ -541,6 +547,7 @@ class LongPollingTransport:
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
+        :raises TransportError: When the HTTP request fails.
         """
         if self.state not in [TransportState.CONNECTING,
                               TransportState.CONNECTED]:
@@ -559,6 +566,7 @@ class LongPollingTransport:
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
+        :raises TransportError: When the HTTP request fails.
         """
         if self.state not in [TransportState.CONNECTING,
                               TransportState.CONNECTED]:
