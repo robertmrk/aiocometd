@@ -5,8 +5,7 @@ from enum import Enum, unique, auto
 
 import aiohttp
 
-from .exceptions import TransportError, TransportInvalidOperation, \
-    TransportTimeoutError
+from .exceptions import TransportError, TransportInvalidOperation
 
 
 logger = logging.getLogger(__name__)
@@ -393,19 +392,14 @@ class LongPollingTransport:
             self._connect_task.cancel()
             await asyncio.wait([self._connect_task])
 
-    async def connect(self, connection_timeout=None):
+    async def connect(self):
         """Connect to the server
 
         The transport will try to start and maintain a continuous connection
         with the server, but it'll return with the response of the first
         successful connection as soon as possible.
 
-        :param connection_timeout: Fail after the given amount of seconds if \
-        a successful connection can't be established.
-        :type connection_timeout: None or int or float
         :return dict: The response of the first successful connection.
-        :raise TransportTimeoutError: If can't connect to the server within \
-        the time specified by *connection_timeout*.
         :raise TransportInvalidOperation: If the transport doesn't has a \
         client id yet, or if it's not in a :obj:`~TransportState.DISCONNECTED`\
         :obj:`state`.
@@ -420,15 +414,7 @@ class LongPollingTransport:
                 "Can't connect to a server without disconnecting first.")
 
         self._state = TransportState.CONNECTING
-        try:
-            return await asyncio.wait_for(
-                self._start_connect_task(self._connect()),
-                timeout=connection_timeout,
-                loop=self._loop)
-        except asyncio.TimeoutError:
-            self._state = TransportState.DISCONNECTED
-            raise TransportTimeoutError("Failed to establish connection "
-                                        "within the given timeout.")
+        return await self._start_connect_task(self._connect())
 
     async def _connect(self, delay=None):
         """Connect to the server

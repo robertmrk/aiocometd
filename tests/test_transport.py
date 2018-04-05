@@ -4,8 +4,7 @@ from asynctest import TestCase, mock
 from aiohttp import ClientSession, client_exceptions
 
 from aiocometd.transport import LongPollingTransport, TransportState
-from aiocometd.exceptions import TransportError, TransportInvalidOperation, \
-    TransportTimeoutError
+from aiocometd.exceptions import TransportError, TransportInvalidOperation
 
 
 class TestLongPollingTransport(TestCase):
@@ -743,6 +742,13 @@ class TestLongPollingTransport(TestCase):
 
     async def test_connect_error_on_invalid_state(self):
         self.transport._client_id = "id"
+        response = {
+            "channel": "/meta/connect",
+            "successful": True,
+            "advice": {"interval": 0, "reconnect": "retry"},
+            "id": "2"
+        }
+        self.transport._connect = mock.CoroutineMock(return_value=response)
         for state in TransportState:
             if state != TransportState.DISCONNECTED:
                 self.transport._state = state
@@ -759,67 +765,22 @@ class TestLongPollingTransport(TestCase):
                                     "client id. Do a handshake first."):
             await self.transport.connect()
 
-    @mock.patch("aiocometd.transport.asyncio.wait_for")
-    async def test_connect(self, wait_for):
+    async def test_connect(self):
         self.transport._client_id = "id"
-        wait_for.return_value = "connect_result"
-        self.transport._start_connect_task = mock.Mock(return_value="coro")
-        self.transport._connect = mock.Mock(return_value="connect")
+        response = {
+            "channel": "/meta/connect",
+            "successful": True,
+            "advice": {"interval": 0, "reconnect": "retry"},
+            "id": "2"
+        }
+        self.transport._connect = mock.CoroutineMock(return_value=response)
+        self.transport._connect_done = mock.MagicMock()
         self.transport._state = TransportState.DISCONNECTED
 
         result = await self.transport.connect()
 
-        self.assertEqual(result, "connect_result")
-        wait_for.assert_called_with(
-            self.transport._start_connect_task.return_value,
-            timeout=None,
-            loop=self.transport._loop)
-        self.transport._start_connect_task.assert_called_with(
-            self.transport._connect.return_value
-        )
+        self.assertEqual(result, response)
         self.assertEqual(self.transport.state, TransportState.CONNECTING)
-
-    @mock.patch("aiocometd.transport.asyncio.wait_for")
-    async def test_connect_with_timeout(self, wait_for):
-        self.transport._client_id = "id"
-        wait_for.return_value = "connect_result"
-        self.transport._start_connect_task = mock.Mock(return_value="coro")
-        self.transport._connect = mock.Mock(return_value="connect")
-        self.transport._state = TransportState.DISCONNECTED
-
-        result = await self.transport.connect(5)
-
-        self.assertEqual(result, "connect_result")
-        wait_for.assert_called_with(
-            self.transport._start_connect_task.return_value,
-            timeout=5,
-            loop=self.transport._loop)
-        self.transport._start_connect_task.assert_called_with(
-            self.transport._connect.return_value
-        )
-        self.assertEqual(self.transport.state, TransportState.CONNECTING)
-
-    @mock.patch("aiocometd.transport.asyncio.wait_for")
-    async def test_connect_with_timeout_error(self, wait_for):
-        self.transport._client_id = "id"
-        wait_for.side_effect = asyncio.TimeoutError()
-        self.transport._start_connect_task = mock.Mock(return_value="coro")
-        self.transport._connect = mock.Mock(return_value="connect")
-        self.transport._state = TransportState.DISCONNECTED
-
-        with self.assertRaisesRegex(TransportTimeoutError,
-                                    "Failed to establish connection "
-                                    "within the given timeout."):
-            await self.transport.connect(5)
-
-        wait_for.assert_called_with(
-            self.transport._start_connect_task.return_value,
-            timeout=5,
-            loop=self.transport._loop)
-        self.transport._start_connect_task.assert_called_with(
-            self.transport._connect.return_value
-        )
-        self.assertEqual(self.transport.state, TransportState.DISCONNECTED)
 
     async def test_connect_done_with_result(self):
         task = asyncio.ensure_future(self.long_task("result"))
