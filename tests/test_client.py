@@ -510,3 +510,14 @@ class TestClient(TestCase):
             result.append(message)
 
         self.assertEqual(result, responses)
+
+    async def test_context_manager(self):
+        self.client.open = mock.CoroutineMock()
+        self.client.close = mock.CoroutineMock()
+
+        async with self.client as client:
+            pass
+
+        self.assertIs(client, self.client)
+        self.client.open.assert_called()
+        self.client.close.assert_called()

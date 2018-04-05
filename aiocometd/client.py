@@ -220,3 +220,12 @@ class Client:
                 yield await self.receive()
             except ClientInvalidOperation:
                 break
+
+    async def __aenter__(self):
+        """Enter the runtime context and call :obj:`open`"""
+        await self.open()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit the runtime context and call :obj:`open`"""
+        await self.close()
