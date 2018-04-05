@@ -91,17 +91,17 @@ class Client:
 
     async def close(self):
         """Disconnect from the CometD server"""
-        if not self.closed:
-            try:
-                await self._transport.disconnect()
+        try:
+            await self._transport.disconnect()
 
-            # Don't raise TransportError if disconnect fails. Event if the
-            # request fails, and the server doesn't gets notified about the
-            # disconnecting client, it will still close the server side session
-            # after a certain timeout. The important thing is that we did our
-            # best to notify the server.
-            except TransportError as error:
-                logger.debug("Disconnect request failed, {}".format(error))
+        # Don't raise TransportError if disconnect fails. Event if the
+        # request fails, and the server doesn't gets notified about the
+        # disconnecting client, it will still close the server side session
+        # after a certain timeout. The important thing is that we did our
+        # best to notify the server.
+        except TransportError as error:
+            logger.debug("Disconnect request failed, {}".format(error))
+        finally:
             self._closed = True
 
     async def subscribe(self, channel):
@@ -222,8 +222,21 @@ class Client:
                 break
 
     async def __aenter__(self):
-        """Enter the runtime context and call :obj:`open`"""
-        await self.open()
+        """Enter the runtime context and call :obj:`open`
+
+        :raise ClientInvalidOperation:  If the client is already open, or in \
+        other words if it isn't :obj:`closed`
+        :raise TransportError: If a network or transport related error occurs
+        :raise ServerError: If the handshake or the first connect request \
+        gets rejected by the server.
+        :return: The client object itself
+        :rtype: Client
+        """
+        try:
+            await self.open()
+        except Exception:
+            await self.close()
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):

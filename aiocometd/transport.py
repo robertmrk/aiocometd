@@ -494,15 +494,13 @@ class LongPollingTransport:
     async def disconnect(self):
         """Disconnect from server
 
-        If the transport is not connected to the server this method does
-        nothing.
         :raises TransportError: When the HTTP request fails.
         """
-        if self.state in [TransportState.CONNECTING,
-                          TransportState.CONNECTED]:
+        try:
             self._state = TransportState.DISCONNECTING
             await self._stop_connect_task()
             await self._send_message(self._DISCONNECT_MESSAGE.copy())
+        finally:
             await self._close_http_session()
             self._state = TransportState.DISCONNECTED
 

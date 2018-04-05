@@ -921,7 +921,7 @@ class TestLongPollingTransport(TestCase):
             self.transport.endpoint = ""
 
     async def test_disconnect(self):
-        for state in [TransportState.CONNECTED, TransportState.CONNECTING]:
+        for state in TransportState:
             self.transport._state = state
             self.transport._stop_connect_task = mock.CoroutineMock()
             self.transport._send_message = mock.CoroutineMock()
@@ -934,22 +934,6 @@ class TestLongPollingTransport(TestCase):
             self.transport._send_message.assert_called_with(
                 self.transport._DISCONNECT_MESSAGE)
             self.transport._close_http_session.assert_called()
-
-    async def test_disconnect_does_nothing_if_not_connected(self):
-        for state in TransportState:
-            if state not in [TransportState.CONNECTED,
-                             TransportState.CONNECTING]:
-                self.transport._state = state
-                self.transport._stop_connect_task = mock.CoroutineMock()
-                self.transport._send_message = mock.CoroutineMock()
-                self.transport._close_http_session = mock.CoroutineMock()
-
-                await self.transport.disconnect()
-
-                self.assertEqual(self.transport.state, state)
-                self.transport._stop_connect_task.assert_not_called()
-                self.transport._send_message.assert_not_called()
-                self.transport._close_http_session.assert_not_called()
 
     async def test_subscribe(self):
         for state in [TransportState.CONNECTED, TransportState.CONNECTING]:

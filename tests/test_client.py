@@ -190,7 +190,7 @@ class TestClient(TestCase):
 
         await self.client.close()
 
-        self.client._transport.disconnect.assert_not_called()
+        self.client._transport.disconnect.assert_called()
         self.assertTrue(self.client.closed)
 
     async def test_close_on_transport_error(self):
@@ -519,5 +519,18 @@ class TestClient(TestCase):
             pass
 
         self.assertIs(client, self.client)
+        self.client.open.assert_called()
+        self.client.close.assert_called()
+
+    async def test_context_manager_on_enter_error(self):
+        self.client.open = mock.CoroutineMock(
+            side_effect=TransportError()
+        )
+        self.client.close = mock.CoroutineMock()
+
+        with self.assertRaises(TransportError):
+            async with self.client:
+                pass
+
         self.client.open.assert_called()
         self.client.close.assert_called()
