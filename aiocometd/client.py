@@ -69,6 +69,7 @@ class Client:
 
         :raise ClientInvalidOperation:  If the client is already open, or in \
         other words if it isn't :obj:`closed`
+        :raise TransportError: If a network or transport related error occurs
         :raise ServerError: If the handshake or the first connect request \
         gets rejected by the server.
         """
@@ -108,9 +109,9 @@ class Client:
 
         :param str channel: Name of the channel
         :raise ClientInvalidOperation: If the client is :obj:`closed`
+        :raise TransportError: If a network or transport related error occurs
         :raise ServerError: If the subscribe request gets rejected by the \
         server
-        :raise TransportError: If a network or transport related error occurs
         """
         if self.closed:
             raise ClientInvalidOperation("Can't send subscribe request while, "
@@ -123,9 +124,9 @@ class Client:
 
         :param str channel: Name of the channel
         :raise ClientInvalidOperation: If the client is :obj:`closed`
+        :raise TransportError: If a network or transport related error occurs
         :raise ServerError: If the unsubscribe request gets rejected by the \
         server
-        :raise TransportError: If a network or transport related error occurs
         """
         if self.closed:
             raise ClientInvalidOperation("Can't send unsubscribe request "
@@ -139,8 +140,8 @@ class Client:
         :param str channel: Name of the channel
         :param dict data: Data to send to the server
         :raise ClientInvalidOperation: If the client is :obj:`closed`
-        :raise ServerError: If the publish request gets rejected by the server
         :raise TransportError: If a network or transport related error occurs
+        :raise ServerError: If the publish request gets rejected by the server
         """
         if self.closed:
             raise ClientInvalidOperation("Can't publish data while, "
