@@ -23,23 +23,34 @@ class TransportTimeoutError(TransportError):
 
 class ServerError(AiocometdException):
     """CometD server side error"""
-    def __init__(self, message):
-        """If the response *message* contains an error field it gets parsed
+    def __init__(self, message, response):
+        """If the *response* contains an error field it gets parsed
         according to the \
         `specs <https://docs.cometd.org/current/reference/#_code_error_code>`_
 
-        :param dict message: Error response message
+        :param str message: Error description
+        :param dict response: Server response message
         """
-        self.message = message
+        super().__init__(message, response)
+
+    @property
+    def message(self):
+        """Error description"""
+        return self.args[0]
+
+    @property
+    def response(self):
+        """Server response message"""
+        return self.args[1]
 
     @property
     def error(self):
-        """The complete error message"""
-        return self.message.get("error")
+        """Error field in the :obj:`response`"""
+        return self.response.get("error")
 
     @property
     def error_code(self):
-        """Error code part of the error message"""
+        """Error code part of the :obj:`error` string"""
         # return the error code as an int if 3 digits can be matched at the
         # beginning of the error string, for all other cases (None or invalid
         # error string) return None
@@ -51,7 +62,7 @@ class ServerError(AiocometdException):
 
     @property
     def error_message(self):
-        """Description of the error"""
+        """Description part of :obj:`error` string"""
         # if the error string is None, then return None
         if self.error is not None:
             # if the third part of the error string can be matched then
@@ -65,7 +76,7 @@ class ServerError(AiocometdException):
 
     @property
     def error_args(self):
-        """Error message arguments"""
+        """Arguments part of :obj:`error` string"""
         # if the error string is None, then return None
         if self.error is not None:
             # if the second part can't be matched, then it must be and invalid
@@ -85,3 +96,8 @@ class ServerError(AiocometdException):
 
 class ClientError(AiocometdException):
     """ComtedD client side error"""
+
+
+class ClientInvalidOperation(ClientError):
+    """The requested operation can't be executed on the current state of the
+    client"""

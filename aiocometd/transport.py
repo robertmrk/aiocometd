@@ -5,8 +5,7 @@ from enum import Enum, unique, auto
 
 import aiohttp
 
-from .exceptions import TransportError, ServerError, \
-    TransportInvalidOperation, TransportTimeoutError
+from .exceptions import TransportError, TransportInvalidOperation
 
 
 logger = logging.getLogger(__name__)
@@ -87,14 +86,21 @@ class LongPollingTransport:
     _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
     def __init__(self, *, endpoint, incoming_queue, reconnection_timeout=1,
-                 loop=None):
+                 ssl=None, loop=None):
         """
-        :param str endpoint: CometD service endpoint
+        :param str endpoint: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
                                              messages
         :param reconnection_timeout: The time to wait before trying to \
         reconnect to the server after a network failure
         :type reconnection_timeout: None or int or float
+        :param ssl: SSL validation mode. None for default SSL check \
+        (:func:`ssl.create_default_context` is used), False for skip SSL \
+        certificate validation, \
+        `aiohttp.Fingerprint <https://aiohttp.readthedocs.io/en/stable/\
+        client_reference.html#aiohttp.Fingerprint>`_ for fingerprint \
+        validation, :obj:`ssl.SSLContext` for custom SSL certificate \
+        validation.
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -102,7 +108,7 @@ class LongPollingTransport:
         """
         #: queue for consuming incoming event messages
         self.incoming_queue = incoming_queue
-        #: CometD service endpoint
+        #: CometD service url
         self._endpoint = endpoint
         #: event loop used to schedule tasks
         self._loop = loop or asyncio.get_event_loop()
@@ -127,10 +133,16 @@ class LongPollingTransport:
         self._connect_task = None
         #: time to wait before reconnecting after a network failure
         self._reconnect_timeout = reconnection_timeout
+        #: asyncio event, set when the state becomes CONNECTED
+        self.connected_event = asyncio.Event()
+        #: asyncio event, set when the state becomes CONNECTING
+        self.connecting_event = asyncio.Event()
+        #: SSL validation mode
+        self.ssl = ssl
 
     @property
     def endpoint(self):
-        """CometD service endpoint"""
+        """CometD service url"""
         return self._endpoint
 
     @property
@@ -154,6 +166,7 @@ class LongPollingTransport:
         :param list[str] connection_types: list of connection types
         :return: Handshake response
         :rtype: dict
+        :raises TransportError: When the HTTP request fails.
         """
         return await self._handshake(connection_types, delay=None)
 
@@ -165,6 +178,7 @@ class LongPollingTransport:
         :type delay: None or int or float
         :return: Handshake response
         :rtype: dict
+        :raises TransportError: When the HTTP request fails.
         """
         if delay:
             await asyncio.sleep(delay, loop=self._loop)
@@ -275,7 +289,8 @@ class LongPollingTransport:
         try:
             session = await self._get_http_session()
             async with self._http_semaphore:
-                response = await session.post(self._endpoint, json=payload)
+                response = await session.post(self._endpoint, json=payload,
+                                              ssl=self.ssl)
             response_payload = await response.json()
         except aiohttp.client_exceptions.ClientError as error:
             logger.debug("Failed to send payload, {}".format(error))
@@ -313,11 +328,10 @@ class LongPollingTransport:
         the given *confirm_for* message.
         :param bool consume_server_errors: Consume server side error \
         messages which could not or should not be handled by the transport. \
-        Let the consumers decide how to deal with them. (these errrors are \
+        Let the consumers decide how to deal with them. (these errors are \
         failed confirmation messages for all channels except \
         ``/meta/connect``, ``/meta/disconnect`` and ``/meta/handshake``). \
-        If it's True, then these messages will be enqueued for consumers as \
-        :obj:`ServerError` objects.
+        If it's True, then these messages will be enqueued for consumers.
         :return: The confirmation response message for the *confirm_for*
                  message, otherwise ``None``
         :rtype: dict or None
@@ -354,7 +368,7 @@ class LongPollingTransport:
                     message["channel"] != "/meta/disconnect" and
                     message["channel"] != "/meta/handshake" and
                     not message.get("successful", True)):
-                await self.incoming_queue.put(ServerError(message))
+                await self.incoming_queue.put(message)
 
             # check if the message is the confirmation response we're looking
             # for, if yes then set it as the result and continue
@@ -367,8 +381,20 @@ class LongPollingTransport:
             if (not message["channel"].startswith("/meta/") and
                     not message["channel"].startswith("/service/") and
                     "data" in message):
-                await self.incoming_queue.put(message)
+                self._enqueue_message(message)
         return result
+
+    def _enqueue_message(self, message):
+        """Enqueue *message* for consumers or drop the message if the queue \
+        is full
+
+        :param message: A response message
+        """
+        try:
+            self.incoming_queue.put_nowait(message)
+        except asyncio.QueueFull:
+            logger.debug("Incoming message queue is full, "
+                         "dropping message.")
 
     def _start_connect_task(self, coro):
         """Wrap the *coro* in a future and schedule it
@@ -392,22 +418,18 @@ class LongPollingTransport:
             self._connect_task.cancel()
             await asyncio.wait([self._connect_task])
 
-    async def connect(self, connection_timeout=None):
+    async def connect(self):
         """Connect to the server
 
         The transport will try to start and maintain a continuous connection
         with the server, but it'll return with the response of the first
         successful connection as soon as possible.
 
-        :param connection_timeout: Fail after the given amount of seconds if \
-        a successful connection can't be established.
-        :type connection_timeout: None or int or float
         :return dict: The response of the first successful connection.
-        :raise TransportTimeoutError: If can't connect to the server within \
-        the time specified by *connection_timeout*.
         :raise TransportInvalidOperation: If the transport doesn't has a \
         client id yet, or if it's not in a :obj:`~TransportState.DISCONNECTED`\
         :obj:`state`.
+        :raises TransportError: When the HTTP request fails.
         """
         if not self.client_id:
             raise TransportInvalidOperation(
@@ -418,15 +440,7 @@ class LongPollingTransport:
                 "Can't connect to a server without disconnecting first.")
 
         self._state = TransportState.CONNECTING
-        try:
-            return await asyncio.wait_for(
-                self._start_connect_task(self._connect()),
-                timeout=connection_timeout,
-                loop=self._loop)
-        except asyncio.TimeoutError:
-            self._state = TransportState.DISCONNECTED
-            raise TransportTimeoutError("Failed to establish connection "
-                                        "within the given timeout.")
+        return await self._start_connect_task(self._connect())
 
     async def _connect(self, delay=None):
         """Connect to the server
@@ -435,6 +449,7 @@ class LongPollingTransport:
         :type delay: None or int or float
         :return: Connect response
         :rtype: dict
+        :raises TransportError: When the HTTP request fails.
         """
         if delay:
             await asyncio.sleep(delay, loop=self._loop)
@@ -465,11 +480,15 @@ class LongPollingTransport:
             reconnect_timeout = self._reconnect_advice["interval"]
             if self.state == TransportState.CONNECTING:
                 self._state = TransportState.CONNECTED
+                self.connected_event.set()
+                self.connecting_event.clear()
         except Exception as error:
             result = error
             reconnect_timeout = self._reconnect_timeout
             if self.state == TransportState.CONNECTED:
                 self._state = TransportState.CONNECTING
+                self.connecting_event.set()
+                self.connected_event.clear()
 
         log_fmt = "Connect task finished with: {!r}"
         logger.debug(log_fmt.format(result))
@@ -505,14 +524,13 @@ class LongPollingTransport:
     async def disconnect(self):
         """Disconnect from server
 
-        If the transport is not connected to the server this method does
-        nothing.
+        :raises TransportError: When the HTTP request fails.
         """
-        if self.state in [TransportState.CONNECTING,
-                          TransportState.CONNECTED]:
+        try:
             self._state = TransportState.DISCONNECTING
             await self._stop_connect_task()
             await self._send_message(self._DISCONNECT_MESSAGE.copy())
+        finally:
             await self._close_http_session()
             self._state = TransportState.DISCONNECTED
 
@@ -525,6 +543,7 @@ class LongPollingTransport:
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
+        :raises TransportError: When the HTTP request fails.
         """
         if self.state not in [TransportState.CONNECTING,
                               TransportState.CONNECTED]:
@@ -542,6 +561,7 @@ class LongPollingTransport:
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
+        :raises TransportError: When the HTTP request fails.
         """
         if self.state not in [TransportState.CONNECTING,
                               TransportState.CONNECTED]:
@@ -560,6 +580,7 @@ class LongPollingTransport:
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
+        :raises TransportError: When the HTTP request fails.
         """
         if self.state not in [TransportState.CONNECTING,
                               TransportState.CONNECTED]:

@@ -4,8 +4,7 @@ from asynctest import TestCase, mock
 from aiohttp import ClientSession, client_exceptions
 
 from aiocometd.transport import LongPollingTransport, TransportState
-from aiocometd.exceptions import TransportError, ServerError, \
-    TransportInvalidOperation, TransportTimeoutError
+from aiocometd.exceptions import TransportError, TransportInvalidOperation
 
 
 class TestLongPollingTransport(TestCase):
@@ -16,7 +15,7 @@ class TestLongPollingTransport(TestCase):
 
     async def long_task(self, result, timeout=None):
         if timeout:
-            asyncio.sleep(timeout, loop=self.loop)
+            await asyncio.sleep(timeout, loop=self.loop)
         if not isinstance(result, Exception):
             return result
         else:
@@ -156,6 +155,7 @@ class TestLongPollingTransport(TestCase):
                 "channel": "/test/channel2"
             }
         ]
+        self.transport.ssl = object()
 
         response = await self.transport._send_payload(payload)
 
@@ -163,7 +163,8 @@ class TestLongPollingTransport(TestCase):
         self.transport._http_semaphore.__aenter__.assert_called()
         self.transport._http_semaphore.__aexit__.assert_called()
         session.post.assert_called_with(self.transport._endpoint,
-                                        json=payload)
+                                        json=payload,
+                                        ssl=self.transport.ssl)
         for i, message in enumerate(payload):
             self.assertEqual(message["id"], str(i))
             self.assertEqual(message["clientId"], self.transport.client_id)
@@ -195,6 +196,7 @@ class TestLongPollingTransport(TestCase):
                 "channel": "/test/channel2"
             }
         ]
+        self.transport.ssl = object()
 
         with self.assertLogs("aiocometd.transport", level="DEBUG") as log:
             with self.assertRaisesRegex(TransportError, str(post_exception)):
@@ -206,7 +208,8 @@ class TestLongPollingTransport(TestCase):
         self.transport._http_semaphore.__aenter__.assert_called()
         self.transport._http_semaphore.__aexit__.assert_called()
         session.post.assert_called_with(self.transport._endpoint,
-                                        json=payload)
+                                        json=payload,
+                                        ssl=self.transport.ssl)
         for i, message in enumerate(payload):
             self.assertEqual(message["id"], str(i))
             self.assertEqual(message["clientId"], self.transport.client_id)
@@ -443,14 +446,69 @@ class TestLongPollingTransport(TestCase):
             consumed_messages.append(await self.transport.incoming_queue.get())
         self.assertEqual(len(consumed_messages), 4)
         self.assertEqual(consumed_messages[0], payload[0])
-        self.assertIsInstance(consumed_messages[1], ServerError)
-        self.assertEqual(consumed_messages[1].message, payload[3])
-        self.assertIsInstance(consumed_messages[2], ServerError)
-        self.assertEqual(consumed_messages[2].message, payload[5])
-        self.assertIsInstance(consumed_messages[3], ServerError)
-        self.assertEqual(consumed_messages[3].message, payload[7])
+        self.assertEqual(consumed_messages[1], payload[3])
+        self.assertEqual(consumed_messages[2], payload[5])
+        self.assertEqual(consumed_messages[3], payload[7])
         self.assertEqual(self.transport.subscriptions,
                          {"/test/channel1", "/test/channel4"})
+
+    async def test_consume_payload_queue_full(self):
+        message = {
+            "channel": "/test/channel1",
+            "data": {"key": "value"},
+            "id": "1"
+        }
+        payload = [
+            # event message
+            {
+                "channel": "/test/channel1",
+                "data": {"key": "value"},
+                "id": "2"
+            }
+        ]
+        self.transport.incoming_queue = asyncio.Queue(maxsize=1)
+        await self.transport.incoming_queue.put(message)
+
+        result = await self.transport._consume_payload(payload)
+
+        self.assertIsNone(result)
+        consumed_messages = []
+        while not self.transport.incoming_queue.empty():
+            consumed_messages.append(await self.transport.incoming_queue.get())
+        self.assertEqual(len(consumed_messages), 1)
+        self.assertEqual(consumed_messages[0], message)
+
+    def test_enqueu_message(self):
+        self.transport.incoming_queue = mock.MagicMock()
+        self.transport.incoming_queue.put_nowait = mock.CoroutineMock()
+        message = {
+            "channel": "/test/channel1",
+            "data": {"key": "value"},
+            "id": "1"
+        }
+
+        self.transport._enqueue_message(message)
+
+        self.transport.incoming_queue.put_nowait.assert_called_with(message)
+
+    async def test_enqueu_message_queue_full(self):
+        self.transport.incoming_queue = mock.MagicMock()
+        self.transport.incoming_queue.put_nowait = mock.MagicMock(
+            side_effect=asyncio.QueueFull()
+        )
+        message = {
+            "channel": "/test/channel1",
+            "data": {"key": "value"},
+            "id": "1"
+        }
+
+        with self.assertLogs("aiocometd.transport", "DEBUG") as log:
+            self.transport._enqueue_message(message)
+
+        log_message = "DEBUG:aiocometd.transport:Incoming message queue is " \
+                      "full, dropping message."
+        self.assertEqual(log.output, [log_message])
+        self.transport.incoming_queue.put_nowait.assert_called_with(message)
 
     async def test_send_message(self):
         message = {
@@ -746,6 +804,13 @@ class TestLongPollingTransport(TestCase):
 
     async def test_connect_error_on_invalid_state(self):
         self.transport._client_id = "id"
+        response = {
+            "channel": "/meta/connect",
+            "successful": True,
+            "advice": {"interval": 0, "reconnect": "retry"},
+            "id": "2"
+        }
+        self.transport._connect = mock.CoroutineMock(return_value=response)
         for state in TransportState:
             if state != TransportState.DISCONNECTED:
                 self.transport._state = state
@@ -762,73 +827,30 @@ class TestLongPollingTransport(TestCase):
                                     "client id. Do a handshake first."):
             await self.transport.connect()
 
-    @mock.patch("aiocometd.transport.asyncio.wait_for")
-    async def test_connect(self, wait_for):
+    async def test_connect(self):
         self.transport._client_id = "id"
-        wait_for.return_value = "connect_result"
-        self.transport._start_connect_task = mock.Mock(return_value="coro")
-        self.transport._connect = mock.Mock(return_value="connect")
+        response = {
+            "channel": "/meta/connect",
+            "successful": True,
+            "advice": {"interval": 0, "reconnect": "retry"},
+            "id": "2"
+        }
+        self.transport._connect = mock.CoroutineMock(return_value=response)
+        self.transport._connect_done = mock.MagicMock()
         self.transport._state = TransportState.DISCONNECTED
 
         result = await self.transport.connect()
 
-        self.assertEqual(result, "connect_result")
-        wait_for.assert_called_with(
-            self.transport._start_connect_task.return_value,
-            timeout=None,
-            loop=self.transport._loop)
-        self.transport._start_connect_task.assert_called_with(
-            self.transport._connect.return_value
-        )
+        self.assertEqual(result, response)
         self.assertEqual(self.transport.state, TransportState.CONNECTING)
-
-    @mock.patch("aiocometd.transport.asyncio.wait_for")
-    async def test_connect_with_timeout(self, wait_for):
-        self.transport._client_id = "id"
-        wait_for.return_value = "connect_result"
-        self.transport._start_connect_task = mock.Mock(return_value="coro")
-        self.transport._connect = mock.Mock(return_value="connect")
-        self.transport._state = TransportState.DISCONNECTED
-
-        result = await self.transport.connect(5)
-
-        self.assertEqual(result, "connect_result")
-        wait_for.assert_called_with(
-            self.transport._start_connect_task.return_value,
-            timeout=5,
-            loop=self.transport._loop)
-        self.transport._start_connect_task.assert_called_with(
-            self.transport._connect.return_value
-        )
-        self.assertEqual(self.transport.state, TransportState.CONNECTING)
-
-    @mock.patch("aiocometd.transport.asyncio.wait_for")
-    async def test_connect_with_timeout_error(self, wait_for):
-        self.transport._client_id = "id"
-        wait_for.side_effect = asyncio.TimeoutError()
-        self.transport._start_connect_task = mock.Mock(return_value="coro")
-        self.transport._connect = mock.Mock(return_value="connect")
-        self.transport._state = TransportState.DISCONNECTED
-
-        with self.assertRaisesRegex(TransportTimeoutError,
-                                    "Failed to establish connection "
-                                    "within the given timeout."):
-            await self.transport.connect(5)
-
-        wait_for.assert_called_with(
-            self.transport._start_connect_task.return_value,
-            timeout=5,
-            loop=self.transport._loop)
-        self.transport._start_connect_task.assert_called_with(
-            self.transport._connect.return_value
-        )
-        self.assertEqual(self.transport.state, TransportState.DISCONNECTED)
 
     async def test_connect_done_with_result(self):
         task = asyncio.ensure_future(self.long_task("result"))
         await asyncio.wait([task])
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTING
+        self.transport.connecting_event.set()
+        self.transport.connected_event.clear()
         self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
@@ -844,6 +866,8 @@ class TestLongPollingTransport(TestCase):
             ["DEBUG:aiocometd.transport:{}".format(log_message)])
         self.transport._follow_advice.assert_called_with(1)
         self.assertEqual(self.transport.state, TransportState.CONNECTED)
+        self.assertFalse(self.transport.connecting_event.is_set())
+        self.assertTrue(self.transport.connected_event.is_set())
 
     async def test_connect_done_with_error(self):
         error = RuntimeError("error")
@@ -851,6 +875,8 @@ class TestLongPollingTransport(TestCase):
         await asyncio.wait([task])
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTED
+        self.transport.connecting_event.clear()
+        self.transport.connected_event.set()
         self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
@@ -866,6 +892,8 @@ class TestLongPollingTransport(TestCase):
             ["DEBUG:aiocometd.transport:{}".format(log_message)])
         self.transport._follow_advice.assert_called_with(2)
         self.assertEqual(self.transport.state, TransportState.CONNECTING)
+        self.assertTrue(self.transport.connecting_event.is_set())
+        self.assertFalse(self.transport.connected_event.is_set())
 
     async def test_connect_dont_follow_advice_on_disconnecting(self):
         task = asyncio.ensure_future(self.long_task("result"))
@@ -963,7 +991,7 @@ class TestLongPollingTransport(TestCase):
             self.transport.endpoint = ""
 
     async def test_disconnect(self):
-        for state in [TransportState.CONNECTED, TransportState.CONNECTING]:
+        for state in TransportState:
             self.transport._state = state
             self.transport._stop_connect_task = mock.CoroutineMock()
             self.transport._send_message = mock.CoroutineMock()
@@ -976,22 +1004,6 @@ class TestLongPollingTransport(TestCase):
             self.transport._send_message.assert_called_with(
                 self.transport._DISCONNECT_MESSAGE)
             self.transport._close_http_session.assert_called()
-
-    async def test_disconnect_does_nothing_if_not_connected(self):
-        for state in TransportState:
-            if state not in [TransportState.CONNECTED,
-                             TransportState.CONNECTING]:
-                self.transport._state = state
-                self.transport._stop_connect_task = mock.CoroutineMock()
-                self.transport._send_message = mock.CoroutineMock()
-                self.transport._close_http_session = mock.CoroutineMock()
-
-                await self.transport.disconnect()
-
-                self.assertEqual(self.transport.state, state)
-                self.transport._stop_connect_task.assert_not_called()
-                self.transport._send_message.assert_not_called()
-                self.transport._close_http_session.assert_not_called()
 
     async def test_subscribe(self):
         for state in [TransportState.CONNECTED, TransportState.CONNECTING]:

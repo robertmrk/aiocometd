@@ -4,6 +4,16 @@ aiocometd package
 Submodules
 ----------
 
+aiocometd.client module
+--------------------------
+
+.. automodule:: aiocometd.client
+    :members:
+    :private-members:
+    :undoc-members:
+    :show-inheritance:
+
+
 aiocometd.transport module
 --------------------------
 
