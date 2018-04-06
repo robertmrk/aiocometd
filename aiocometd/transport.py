@@ -126,6 +126,10 @@ class LongPollingTransport:
         self._connect_task = None
         #: time to wait before reconnecting after a network failure
         self._reconnect_timeout = reconnection_timeout
+        #: asyncio event, set when the state becomes CONNECTED
+        self.connected_event = asyncio.Event()
+        #: asyncio event, set when the state becomes CONNECTING
+        self.connecting_event = asyncio.Event()
 
     @property
     def endpoint(self):
@@ -454,11 +458,15 @@ class LongPollingTransport:
             reconnect_timeout = self._reconnect_advice["interval"]
             if self.state == TransportState.CONNECTING:
                 self._state = TransportState.CONNECTED
+                self.connected_event.set()
+                self.connecting_event.clear()
         except Exception as error:
             result = error
             reconnect_timeout = self._reconnect_timeout
             if self.state == TransportState.CONNECTED:
                 self._state = TransportState.CONNECTING
+                self.connecting_event.set()
+                self.connected_event.clear()
 
         log_fmt = "Connect task finished with: {!r}"
         logger.debug(log_fmt.format(result))

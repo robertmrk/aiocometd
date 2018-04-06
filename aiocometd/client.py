@@ -4,7 +4,8 @@ import reprlib
 import logging
 
 from . import transport
-from .exceptions import ServerError, ClientInvalidOperation, TransportError
+from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
+    TransportTimeoutError
 
 
 logger = logging.getLogger(__name__)
@@ -21,9 +22,13 @@ class Client:
         "/meta/unsubscribe": "Unsubscribe request failed."
     }
 
-    def __init__(self, endpoint, *, loop=None):
+    def __init__(self, endpoint, *, connection_timeout=10.0, loop=None):
         """
         :param str endpoint: CometD service url
+        :param connection_timeout: The maximum amount of time to wait for the \
+        transport to re-establish a connection with the server when the \
+        connection fails.
+        :type connection_timeout: int, float or None
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -39,6 +44,9 @@ class Client:
         self._transport = None
         #: marks whether the client is open or closed
         self._closed = True
+        #: The maximum amount of time to wait for the transport to re-establish
+        #: a connection with the server when the connection fails
+        self.connection_timeout = connection_timeout
 
     def __repr__(self):
         """Formal string representation"""
@@ -187,9 +195,11 @@ class Client:
         more pending incoming messages
         :raise ServerError: If the client receives a confirmation message \
          which is not ``successful``
+        :raise TransportTimeoutError: If the transport can't re-establish \
+        connection with the server in :obj:`connection_timeout` time.
         """
         if not self.closed or self.has_pending_messages:
-            response = await self._incoming_queue.get()
+            response = await self._get_message(self.connection_timeout)
             self._verify_response(response)
             return response
         else:
@@ -214,7 +224,13 @@ class Client:
         return self.pending_count > 0
 
     async def __aiter__(self):
-        """Asynchronous iterator"""
+        """Asynchronous iterator
+
+        :raise ServerError: If the client receives a confirmation message \
+         which is not ``successful``
+        :raise TransportTimeoutError: If the transport can't re-establish \
+        connection with the server in :obj:`connection_timeout` time.
+        """
         while True:
             try:
                 yield await self.receive()
@@ -242,3 +258,50 @@ class Client:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the runtime context and call :obj:`open`"""
         await self.close()
+
+    async def _get_message(self, connection_timeout):
+        """Get the next incoming message
+
+        :param connection_timeout: The maximum amount of time to wait for the \
+        transport to re-establish a connection with the server when the \
+        connection fails.
+        :return: Incoming message
+        :rtype: dict
+        :raise TransportTimeoutError: If the transport can't re-establish \
+        connection with the server in :obj:`connection_timeout` time.
+        """
+        if connection_timeout:
+            timeout_task = asyncio.ensure_future(
+                self._wait_connection_timeout(connection_timeout),
+                loop=self._loop
+            )
+            get_task = asyncio.ensure_future(self._incoming_queue.get(),
+                                             loop=self._loop)
+            done, pending = await asyncio.wait(
+                [timeout_task, get_task],
+                return_when=asyncio.FIRST_COMPLETED,
+                loop=self._loop)
+
+            next(iter(pending)).cancel()
+            if get_task in done:
+                return await get_task
+            else:
+                raise TransportTimeoutError("Lost connection with the server")
+        else:
+            return await self._incoming_queue.get()
+
+    async def _wait_connection_timeout(self, timeout):
+        """Wait for and return when the transport can't re-establish \
+        connection with the server in *timeout* time
+
+        :param timeout: The maximum amount of time to wait for the \
+        transport to re-establish a connection with the server when the \
+        connection fails.
+        """
+        while True:
+            await self._transport.connecting_event.wait()
+            try:
+                await asyncio.wait_for(self._transport.connected_event.wait(),
+                                       timeout, loop=self._loop)
+            except asyncio.TimeoutError:
+                break

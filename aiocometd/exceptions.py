@@ -17,6 +17,10 @@ class TransportInvalidOperation(TransportError):
     transport"""
 
 
+class TransportTimeoutError(TransportError):
+    """Transport timeout"""
+
+
 class ServerError(AiocometdException):
     """CometD server side error"""
     def __init__(self, message, response):

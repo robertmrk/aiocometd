@@ -15,7 +15,7 @@ class TestLongPollingTransport(TestCase):
 
     async def long_task(self, result, timeout=None):
         if timeout:
-            asyncio.sleep(timeout, loop=self.loop)
+            await asyncio.sleep(timeout, loop=self.loop)
         if not isinstance(result, Exception):
             return result
         else:
@@ -787,6 +787,8 @@ class TestLongPollingTransport(TestCase):
         await asyncio.wait([task])
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTING
+        self.transport.connecting_event.set()
+        self.transport.connected_event.clear()
         self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
@@ -802,6 +804,8 @@ class TestLongPollingTransport(TestCase):
             ["DEBUG:aiocometd.transport:{}".format(log_message)])
         self.transport._follow_advice.assert_called_with(1)
         self.assertEqual(self.transport.state, TransportState.CONNECTED)
+        self.assertFalse(self.transport.connecting_event.is_set())
+        self.assertTrue(self.transport.connected_event.is_set())
 
     async def test_connect_done_with_error(self):
         error = RuntimeError("error")
@@ -809,6 +813,8 @@ class TestLongPollingTransport(TestCase):
         await asyncio.wait([task])
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTED
+        self.transport.connecting_event.clear()
+        self.transport.connected_event.set()
         self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
@@ -824,6 +830,8 @@ class TestLongPollingTransport(TestCase):
             ["DEBUG:aiocometd.transport:{}".format(log_message)])
         self.transport._follow_advice.assert_called_with(2)
         self.assertEqual(self.transport.state, TransportState.CONNECTING)
+        self.assertTrue(self.transport.connecting_event.is_set())
+        self.assertFalse(self.transport.connected_event.is_set())
 
     async def test_connect_dont_follow_advice_on_disconnecting(self):
         task = asyncio.ensure_future(self.long_task("result"))
