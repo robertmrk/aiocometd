@@ -288,16 +288,22 @@ class Client:
             )
             get_task = asyncio.ensure_future(self._incoming_queue.get(),
                                              loop=self._loop)
-            done, pending = await asyncio.wait(
-                [timeout_task, get_task],
-                return_when=asyncio.FIRST_COMPLETED,
-                loop=self._loop)
+            try:
+                done, pending = await asyncio.wait(
+                    [timeout_task, get_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                    loop=self._loop)
 
-            next(iter(pending)).cancel()
-            if get_task in done:
-                return await get_task
-            else:
-                raise TransportTimeoutError("Lost connection with the server")
+                next(iter(pending)).cancel()
+                if get_task in done:
+                    return get_task.result()
+                else:
+                    raise TransportTimeoutError("Lost connection with the "
+                                                "server.")
+            except asyncio.CancelledError:
+                timeout_task.cancel()
+                get_task.cancel()
+                raise
         else:
             return await self._incoming_queue.get()
 

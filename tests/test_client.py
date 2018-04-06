@@ -664,3 +664,21 @@ class TestClient(TestCase):
             await self.client._get_message(timeout)
 
         self.client._wait_connection_timeout.assert_called_with(timeout)
+
+    @mock.patch("aiocometd.client.asyncio")
+    async def test_get_message_cancelled(self, asyncio_mock):
+        self.client._incoming_queue = mock.MagicMock()
+        self.client._wait_connection_timeout = mock.MagicMock()
+        asyncio_mock.ensure_future = mock.MagicMock(
+            side_effect=[mock.MagicMock(), mock.MagicMock()]
+        )
+        asyncio_mock.wait = mock.CoroutineMock(
+            side_effect=asyncio.CancelledError()
+        )
+        asyncio_mock.CancelledError = asyncio.CancelledError
+
+        with self.assertRaises(asyncio.CancelledError):
+            await self.client._get_message(1)
+
+        for task in asyncio_mock.ensure_future.side_effect:
+            task.cancel.assert_called()
