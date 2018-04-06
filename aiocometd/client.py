@@ -22,13 +22,21 @@ class Client:
         "/meta/unsubscribe": "Unsubscribe request failed."
     }
 
-    def __init__(self, endpoint, *, connection_timeout=10.0, loop=None):
+    def __init__(self, endpoint, *, connection_timeout=10.0, ssl=None,
+                 loop=None):
         """
         :param str endpoint: CometD service url
         :param connection_timeout: The maximum amount of time to wait for the \
         transport to re-establish a connection with the server when the \
         connection fails.
         :type connection_timeout: int, float or None
+        :param ssl: SSL validation mode. None for default SSL check \
+        (:func:`ssl.create_default_context` is used), False for skip SSL \
+        certificate validation, \
+        `aiohttp.Fingerprint <https://aiohttp.readthedocs.io/en/stable/\
+        client_reference.html#aiohttp.Fingerprint>`_ for fingerprint \
+        validation, :obj:`ssl.SSLContext` for custom SSL certificate \
+        validation.
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -47,6 +55,8 @@ class Client:
         #: The maximum amount of time to wait for the transport to re-establish
         #: a connection with the server when the connection fails
         self.connection_timeout = connection_timeout
+        #: SSL validation mode
+        self.ssl = ssl
 
     def __repr__(self):
         """Formal string representation"""
@@ -87,7 +97,8 @@ class Client:
         self._incoming_queue = asyncio.Queue()
         self._transport = transport.LongPollingTransport(
             endpoint=self.endpoint,
-            incoming_queue=self._incoming_queue
+            incoming_queue=self._incoming_queue,
+            ssl=self.ssl
         )
 
         response = await self._transport.handshake([self._transport.NAME])

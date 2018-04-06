@@ -86,7 +86,7 @@ class LongPollingTransport:
     _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
     def __init__(self, *, endpoint, incoming_queue, reconnection_timeout=1,
-                 loop=None):
+                 ssl=None, loop=None):
         """
         :param str endpoint: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
@@ -94,6 +94,13 @@ class LongPollingTransport:
         :param reconnection_timeout: The time to wait before trying to \
         reconnect to the server after a network failure
         :type reconnection_timeout: None or int or float
+        :param ssl: SSL validation mode. None for default SSL check \
+        (:func:`ssl.create_default_context` is used), False for skip SSL \
+        certificate validation, \
+        `aiohttp.Fingerprint <https://aiohttp.readthedocs.io/en/stable/\
+        client_reference.html#aiohttp.Fingerprint>`_ for fingerprint \
+        validation, :obj:`ssl.SSLContext` for custom SSL certificate \
+        validation.
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -130,6 +137,8 @@ class LongPollingTransport:
         self.connected_event = asyncio.Event()
         #: asyncio event, set when the state becomes CONNECTING
         self.connecting_event = asyncio.Event()
+        #: SSL validation mode
+        self.ssl = ssl
 
     @property
     def endpoint(self):
@@ -280,7 +289,8 @@ class LongPollingTransport:
         try:
             session = await self._get_http_session()
             async with self._http_semaphore:
-                response = await session.post(self._endpoint, json=payload)
+                response = await session.post(self._endpoint, json=payload,
+                                              ssl=self.ssl)
             response_payload = await response.json()
         except aiohttp.client_exceptions.ClientError as error:
             logger.debug("Failed to send payload, {}".format(error))

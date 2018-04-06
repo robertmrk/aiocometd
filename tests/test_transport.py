@@ -155,6 +155,7 @@ class TestLongPollingTransport(TestCase):
                 "channel": "/test/channel2"
             }
         ]
+        self.transport.ssl = object()
 
         response = await self.transport._send_payload(payload)
 
@@ -162,7 +163,8 @@ class TestLongPollingTransport(TestCase):
         self.transport._http_semaphore.__aenter__.assert_called()
         self.transport._http_semaphore.__aexit__.assert_called()
         session.post.assert_called_with(self.transport._endpoint,
-                                        json=payload)
+                                        json=payload,
+                                        ssl=self.transport.ssl)
         for i, message in enumerate(payload):
             self.assertEqual(message["id"], str(i))
             self.assertEqual(message["clientId"], self.transport.client_id)
@@ -194,6 +196,7 @@ class TestLongPollingTransport(TestCase):
                 "channel": "/test/channel2"
             }
         ]
+        self.transport.ssl = object()
 
         with self.assertLogs("aiocometd.transport", level="DEBUG") as log:
             with self.assertRaisesRegex(TransportError, str(post_exception)):
@@ -205,7 +208,8 @@ class TestLongPollingTransport(TestCase):
         self.transport._http_semaphore.__aenter__.assert_called()
         self.transport._http_semaphore.__aexit__.assert_called()
         session.post.assert_called_with(self.transport._endpoint,
-                                        json=payload)
+                                        json=payload,
+                                        ssl=self.transport.ssl)
         for i, message in enumerate(payload):
             self.assertEqual(message["id"], str(i))
             self.assertEqual(message["clientId"], self.transport.client_id)

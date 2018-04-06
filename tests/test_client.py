@@ -62,6 +62,7 @@ class TestClient(TestCase):
     async def test_open(self, transport_cls_mock):
         self.client.endpoint = "http://example.com"
         self.client._incoming_queue = None
+        self.client.ssl = object()
         handshake_response = {
             "channel": "/meta/handshake",
             "version": "1.0",
@@ -87,7 +88,8 @@ class TestClient(TestCase):
         self.assertIsInstance(self.client._incoming_queue, asyncio.Queue)
         transport_cls_mock.assert_called_with(
             endpoint=self.client.endpoint,
-            incoming_queue=self.client._incoming_queue
+            incoming_queue=self.client._incoming_queue,
+            ssl=self.client.ssl
         )
         transport.handshake.assert_called_with([transport.NAME])
         transport.connect.assert_called()
@@ -112,6 +114,7 @@ class TestClient(TestCase):
     async def test_open_handshake_error(self, transport_cls_mock):
         self.client.endpoint = "http://example.com"
         self.client._incoming_queue = None
+        self.client.ssl = object()
         handshake_response = {
             "channel": "/meta/handshake",
             "version": "1.0",
@@ -139,7 +142,8 @@ class TestClient(TestCase):
         self.assertIsInstance(self.client._incoming_queue, asyncio.Queue)
         transport_cls_mock.assert_called_with(
             endpoint=self.client.endpoint,
-            incoming_queue=self.client._incoming_queue
+            incoming_queue=self.client._incoming_queue,
+            ssl=self.client.ssl
         )
         transport.handshake.assert_called_with([transport.NAME])
         self.assertTrue(self.client.closed)
@@ -148,6 +152,7 @@ class TestClient(TestCase):
     async def test_open_connect_error(self, transport_cls_mock):
         self.client.endpoint = "http://example.com"
         self.client._incoming_queue = None
+        self.client.ssl = object()
         handshake_response = {
             "channel": "/meta/handshake",
             "version": "1.0",
@@ -176,7 +181,8 @@ class TestClient(TestCase):
         self.assertIsInstance(self.client._incoming_queue, asyncio.Queue)
         transport_cls_mock.assert_called_with(
             endpoint=self.client.endpoint,
-            incoming_queue=self.client._incoming_queue
+            incoming_queue=self.client._incoming_queue,
+            ssl=self.client.ssl
         )
         transport.handshake.assert_called_with([transport.NAME])
         self.assertTrue(self.client.closed)
