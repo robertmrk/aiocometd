@@ -452,6 +452,64 @@ class TestLongPollingTransport(TestCase):
         self.assertEqual(self.transport.subscriptions,
                          {"/test/channel1", "/test/channel4"})
 
+    async def test_consume_payload_queue_full(self):
+        message = {
+            "channel": "/test/channel1",
+            "data": {"key": "value"},
+            "id": "1"
+        }
+        payload = [
+            # event message
+            {
+                "channel": "/test/channel1",
+                "data": {"key": "value"},
+                "id": "2"
+            }
+        ]
+        self.transport.incoming_queue = asyncio.Queue(maxsize=1)
+        await self.transport.incoming_queue.put(message)
+
+        result = await self.transport._consume_payload(payload)
+
+        self.assertIsNone(result)
+        consumed_messages = []
+        while not self.transport.incoming_queue.empty():
+            consumed_messages.append(await self.transport.incoming_queue.get())
+        self.assertEqual(len(consumed_messages), 1)
+        self.assertEqual(consumed_messages[0], message)
+
+    def test_enqueu_message(self):
+        self.transport.incoming_queue = mock.MagicMock()
+        self.transport.incoming_queue.put_nowait = mock.CoroutineMock()
+        message = {
+            "channel": "/test/channel1",
+            "data": {"key": "value"},
+            "id": "1"
+        }
+
+        self.transport._enqueue_message(message)
+
+        self.transport.incoming_queue.put_nowait.assert_called_with(message)
+
+    async def test_enqueu_message_queue_full(self):
+        self.transport.incoming_queue = mock.MagicMock()
+        self.transport.incoming_queue.put_nowait = mock.MagicMock(
+            side_effect=asyncio.QueueFull()
+        )
+        message = {
+            "channel": "/test/channel1",
+            "data": {"key": "value"},
+            "id": "1"
+        }
+
+        with self.assertLogs("aiocometd.transport", "DEBUG") as log:
+            self.transport._enqueue_message(message)
+
+        log_message = "DEBUG:aiocometd.transport:Incoming message queue is " \
+                      "full, dropping message."
+        self.assertEqual(log.output, [log_message])
+        self.transport.incoming_queue.put_nowait.assert_called_with(message)
+
     async def test_send_message(self):
         message = {
             "channel": "/test/channel1",

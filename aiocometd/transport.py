@@ -381,8 +381,20 @@ class LongPollingTransport:
             if (not message["channel"].startswith("/meta/") and
                     not message["channel"].startswith("/service/") and
                     "data" in message):
-                await self.incoming_queue.put(message)
+                self._enqueue_message(message)
         return result
+
+    def _enqueue_message(self, message):
+        """Enqueue *message* for consumers or drop the message if the queue \
+        is full
+
+        :param message: A response message
+        """
+        try:
+            self.incoming_queue.put_nowait(message)
+        except asyncio.QueueFull:
+            logger.debug("Incoming message queue is full, "
+                         "dropping message.")
 
     def _start_connect_task(self, coro):
         """Wrap the *coro* in a future and schedule it

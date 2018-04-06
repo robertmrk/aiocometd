@@ -23,7 +23,7 @@ class Client:
     }
 
     def __init__(self, endpoint, *, connection_timeout=10.0, ssl=None,
-                 loop=None):
+                 prefetch_size=0, loop=None):
         """
         :param str endpoint: CometD service url
         :param connection_timeout: The maximum amount of time to wait for the \
@@ -37,6 +37,10 @@ class Client:
         client_reference.html#aiohttp.Fingerprint>`_ for fingerprint \
         validation, :obj:`ssl.SSLContext` for custom SSL certificate \
         validation.
+        :param int prefetch_size: The maximum number of messages to prefetch \
+        from the server. If the number of prefetched messages reach this size \
+        all following messages will be dropped until messages get consumed. \
+        If it is less than or equal to zero, the size is infinite.
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -57,6 +61,8 @@ class Client:
         self.connection_timeout = connection_timeout
         #: SSL validation mode
         self.ssl = ssl
+        #: the maximum number of messages to prefetch from the server
+        self._prefetch_size = prefetch_size
 
     def __repr__(self):
         """Formal string representation"""
@@ -94,7 +100,7 @@ class Client:
         if not self.closed:
             raise ClientInvalidOperation("Client is already open.")
 
-        self._incoming_queue = asyncio.Queue()
+        self._incoming_queue = asyncio.Queue(maxsize=self._prefetch_size)
         self._transport = transport.LongPollingTransport(
             endpoint=self.endpoint,
             incoming_queue=self._incoming_queue,
