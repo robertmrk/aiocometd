@@ -77,7 +77,7 @@ class TestClient(TestCase):
             "id": "2"
         }
         transport = mock.MagicMock()
-        transport.NAME = "transport name"
+        transport.name = "transport name"
         transport.handshake = \
             mock.CoroutineMock(return_value=handshake_response)
         transport.connect = mock.CoroutineMock(return_value=connect_response)
@@ -91,7 +91,7 @@ class TestClient(TestCase):
             incoming_queue=self.client._incoming_queue,
             ssl=self.client.ssl
         )
-        transport.handshake.assert_called_with([transport.NAME])
+        transport.handshake.assert_called_with([transport.name])
         transport.connect.assert_called()
         self.assertFalse(self.client.closed)
 
@@ -129,7 +129,7 @@ class TestClient(TestCase):
             "id": "2"
         }
         transport = mock.MagicMock()
-        transport.NAME = "transport name"
+        transport.name = "transport name"
         transport.handshake = \
             mock.CoroutineMock(return_value=handshake_response)
         transport.connect = mock.CoroutineMock(return_value=connect_response)
@@ -145,7 +145,7 @@ class TestClient(TestCase):
             incoming_queue=self.client._incoming_queue,
             ssl=self.client.ssl
         )
-        transport.handshake.assert_called_with([transport.NAME])
+        transport.handshake.assert_called_with([transport.name])
         self.assertTrue(self.client.closed)
 
     @mock.patch("aiocometd.client.transport.LongPollingTransport")
@@ -168,7 +168,7 @@ class TestClient(TestCase):
             "error": "401::Connection declined"
         }
         transport = mock.MagicMock()
-        transport.NAME = "transport name"
+        transport.name = "transport name"
         transport.handshake = \
             mock.CoroutineMock(return_value=handshake_response)
         transport.connect = mock.CoroutineMock(return_value=connect_response)
@@ -184,36 +184,57 @@ class TestClient(TestCase):
             incoming_queue=self.client._incoming_queue,
             ssl=self.client.ssl
         )
-        transport.handshake.assert_called_with([transport.NAME])
+        transport.handshake.assert_called_with([transport.name])
         self.assertTrue(self.client.closed)
 
     async def test_close(self):
         self.client._closed = False
         self.client._transport = mock.MagicMock()
+        self.client._transport.client_id = "client_id"
         self.client._transport.disconnect = mock.CoroutineMock()
+        self.client._transport.close = mock.CoroutineMock()
 
         await self.client.close()
 
         self.client._transport.disconnect.assert_called()
+        self.client._transport.close.assert_called()
+        self.assertTrue(self.client.closed)
+
+    async def test_close_no_client_id(self):
+        self.client._closed = False
+        self.client._transport = mock.MagicMock()
+        self.client._transport.client_id = None
+        self.client._transport.disconnect = mock.CoroutineMock()
+        self.client._transport.close = mock.CoroutineMock()
+
+        await self.client.close()
+
+        self.client._transport.disconnect.assert_not_called()
+        self.client._transport.close.assert_called()
         self.assertTrue(self.client.closed)
 
     async def test_close_if_already_closed(self):
         self.client._closed = True
         self.client._transport = mock.MagicMock()
+        self.client._transport.client_id = "client_id"
         self.client._transport.disconnect = mock.CoroutineMock()
+        self.client._transport.close = mock.CoroutineMock()
 
         await self.client.close()
 
         self.client._transport.disconnect.assert_called()
+        self.client._transport.close.assert_called()
         self.assertTrue(self.client.closed)
 
     async def test_close_on_transport_error(self):
         self.client._closed = False
         self.client._transport = mock.MagicMock()
+        self.client._transport.client_id = "client_id"
         error = TransportError("description")
         self.client._transport.disconnect = mock.CoroutineMock(
             side_effect=error
         )
+        self.client._transport.close = mock.CoroutineMock()
         expected_log = ["DEBUG:aiocometd.client:"
                         "Disconnect request failed, {}".format(error)]
 
@@ -222,6 +243,7 @@ class TestClient(TestCase):
 
         self.assertEqual(log.output, expected_log)
         self.client._transport.disconnect.assert_called()
+        self.client._transport.close.assert_called()
         self.assertTrue(self.client.closed)
 
     async def test_subscribe(self):
@@ -572,8 +594,8 @@ class TestClient(TestCase):
     @mock.patch("aiocometd.client.asyncio")
     async def test_wait_connection_timeout_on_timeout(self, asyncio_mock):
         self.client._transport = mock.MagicMock()
-        self.client._transport.connecting_event.wait = mock.CoroutineMock()
-        self.client._transport.connected_event.wait = mock.MagicMock(
+        self.client._transport.wait_for_connecting = mock.CoroutineMock()
+        self.client._transport.wait_for_connected = mock.MagicMock(
             return_value=object()
         )
         timeout = 2
@@ -584,10 +606,10 @@ class TestClient(TestCase):
 
         await self.client._wait_connection_timeout(timeout)
 
-        self.client._transport.connecting_event.wait.assert_called_once()
-        self.client._transport.connected_event.wait.assert_called_once()
+        self.client._transport.wait_for_connecting.assert_called_once()
+        self.client._transport.wait_for_connected.assert_called_once()
         asyncio_mock.wait_for.assert_called_with(
-            self.client._transport.connected_event.wait.return_value,
+            self.client._transport.wait_for_connected.return_value,
             timeout,
             loop=self.client._loop
         )
@@ -595,8 +617,8 @@ class TestClient(TestCase):
     @mock.patch("aiocometd.client.asyncio")
     async def test_wait_connection_timeout_iterations(self, asyncio_mock):
         self.client._transport = mock.MagicMock()
-        self.client._transport.connecting_event.wait = mock.CoroutineMock()
-        self.client._transport.connected_event.wait = mock.MagicMock(
+        self.client._transport.wait_for_connecting = mock.CoroutineMock()
+        self.client._transport.wait_for_connected = mock.MagicMock(
             return_value=object()
         )
         timeout = 2
@@ -607,15 +629,15 @@ class TestClient(TestCase):
 
         await self.client._wait_connection_timeout(timeout)
 
-        self.client._transport.connecting_event.wait.assert_has_calls(
+        self.client._transport.wait_for_connecting.assert_has_calls(
             [mock.call()] * 2
         )
-        self.client._transport.connected_event.wait.assert_has_calls(
+        self.client._transport.wait_for_connecting.assert_has_calls(
             [mock.call()] * 2
         )
         asyncio_mock.wait_for.assert_has_calls(
             [mock.call(
-                self.client._transport.connected_event.wait.return_value,
+                self.client._transport.wait_for_connected.return_value,
                 timeout,
                 loop=self.client._loop)] * 2
         )

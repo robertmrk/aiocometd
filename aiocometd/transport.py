@@ -2,6 +2,7 @@
 import asyncio
 import logging
 from enum import Enum, unique, auto
+from abc import ABC, abstractmethod
 
 import aiohttp
 
@@ -24,10 +25,128 @@ class TransportState(Enum):
     DISCONNECTING = auto()
 
 
-class LongPollingTransport:
-    """Long-polling type transport"""
-    #: The transport type's identifier
-    NAME = "long-polling"
+class Transport(ABC):
+    """Defines the operations that all transport classes should support"""
+    @property
+    @abstractmethod
+    def name(self):
+        """The transport type's identifier"""
+
+    @property
+    @abstractmethod
+    def endpoint(self):
+        """CometD service url"""
+
+    @property
+    @abstractmethod
+    def client_id(self):
+        """Clinet id value assigned by the server"""
+
+    @property
+    @abstractmethod
+    def state(self):
+        """Current state of the transport"""
+
+    @property
+    @abstractmethod
+    def subscriptions(self):
+        """Set of subscribed channels"""
+
+    @abstractmethod
+    async def handshake(self, connection_types):
+        """Executes the handshake operation
+
+        :param list[str] connection_types: list of connection types
+        :return: Handshake response
+        :rtype: dict
+        :raises TransportError: When the network request fails.
+        """
+
+    @abstractmethod
+    async def connect(self):
+        """Connect to the server
+
+        The transport will try to start and maintain a continuous connection
+        with the server, but it'll return with the response of the first
+        successful connection as soon as possible.
+
+        :return dict: The response of the first successful connection.
+        :raise TransportInvalidOperation: If the transport doesn't has a \
+        client id yet, or if it's not in a :obj:`~TransportState.DISCONNECTED`\
+        :obj:`state`.
+        :raises TransportError: When the network request fails.
+        """
+
+    @abstractmethod
+    async def disconnect(self):
+        """Disconnect from server
+
+        :raises TransportError: When the network request fails.
+        """
+
+    @abstractmethod
+    async def close(self):
+        """Close transport and release resources"""
+
+    @abstractmethod
+    async def subscribe(self, channel):
+        """Subscribe to *channel*
+
+        :param str channel: Name of the channel
+        :return: Subscribe response
+        :rtype: dict
+        :raise TransportInvalidOperation: If the transport is not in the \
+        :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
+        :obj:`state`
+        :raises TransportError: When the network request fails.
+        """
+
+    @abstractmethod
+    async def unsubscribe(self, channel):
+        """Unsubscribe from *channel*
+
+        :param str channel: Name of the channel
+        :return: Unsubscribe response
+        :rtype: dict
+        :raise TransportInvalidOperation: If the transport is not in the \
+        :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
+        :obj:`state`
+        :raises TransportError: When the network request fails.
+        """
+
+    @abstractmethod
+    async def publish(self, channel, data):
+        """Publish *data* to the given *channel*
+
+        :param str channel: Name of the channel
+        :param dict data: Data to send to the server
+        :return: Publish response
+        :rtype: dict
+        :raise TransportInvalidOperation: If the transport is not in the \
+        :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
+        :obj:`state`
+        :raises TransportError: When the network request fails.
+        """
+
+    @abstractmethod
+    async def wait_for_connected(self):
+        """Waits for and returns when the transport enters the \
+        :obj:`~TransportState.CONNECTED` state"""
+
+    @abstractmethod
+    async def wait_for_connecting(self):
+        """Waits for and returns when the transport enters the \
+        :obj:`~TransportState.CONNECTING` state"""
+
+
+class _TransportBase(Transport):
+    """Base transport implementation
+
+    This class contains most of the transport operations implemented, it can
+    be used as a base class for various concrete transport implementations.
+    When subclassing, at a minimum the :meth:`_send_payload` method should be
+    reimplemented.
+    """
     #: Handshake message template
     _HANDSHAKE_MESSAGE = {
         # mandatory
@@ -43,7 +162,7 @@ class LongPollingTransport:
         # mandatory
         "channel": "/meta/connect",
         "clientId": None,
-        "connectionType": "long-polling",
+        "connectionType": None,
         # optional
         "id": None
     }
@@ -82,12 +201,11 @@ class LongPollingTransport:
         # optional
         "id": None
     }
-    #: Timeout to give to HTTP session to close itself
-    _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
-    def __init__(self, *, endpoint, incoming_queue, reconnection_timeout=1,
-                 ssl=None, loop=None):
+    def __init__(self, *, name, endpoint, incoming_queue,
+                 reconnection_timeout=1, ssl=None, loop=None):
         """
+        :param str name: The tranport type's identifier
         :param str endpoint: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
                                              messages
@@ -106,6 +224,8 @@ class LongPollingTransport:
                      :func:`asyncio.get_event_loop` is used to get the default
                      event loop.
         """
+        #: the tranport type's identifier
+        self._name = name
         #: queue for consuming incoming event messages
         self.incoming_queue = incoming_queue
         #: CometD service url
@@ -117,10 +237,6 @@ class LongPollingTransport:
         #: message id which should be unique for every message during a client
         #: session
         self._message_id = 0
-        #: semaphore to limit the number of concurrent HTTP connections to 2
-        self._http_semaphore = asyncio.Semaphore(2, loop=self._loop)
-        #: http session
-        self._http_session = None
         #: reconnection advice parameters returned by the server
         self._reconnect_advice = None
         #: set of subscribed channels
@@ -134,11 +250,16 @@ class LongPollingTransport:
         #: time to wait before reconnecting after a network failure
         self._reconnect_timeout = reconnection_timeout
         #: asyncio event, set when the state becomes CONNECTED
-        self.connected_event = asyncio.Event()
+        self._connected_event = asyncio.Event()
         #: asyncio event, set when the state becomes CONNECTING
-        self.connecting_event = asyncio.Event()
+        self._connecting_event = asyncio.Event()
         #: SSL validation mode
         self.ssl = ssl
+
+    @property
+    def name(self):
+        """The transport type's identifier"""
+        return self._name
 
     @property
     def endpoint(self):
@@ -160,13 +281,19 @@ class LongPollingTransport:
         """Set of subscribed channels"""
         return self._subscriptions
 
+    async def wait_for_connected(self):
+        await self._connected_event.wait()
+
+    async def wait_for_connecting(self):
+        await self._connecting_event.wait()
+
     async def handshake(self, connection_types):
         """Executes the handshake operation
 
         :param list[str] connection_types: list of connection types
         :return: Handshake response
         :rtype: dict
-        :raises TransportError: When the HTTP request fails.
+        :raises TransportError: When the network request fails.
         """
         return await self._handshake(connection_types, delay=None)
 
@@ -178,7 +305,7 @@ class LongPollingTransport:
         :type delay: None or int or float
         :return: Handshake response
         :rtype: dict
-        :raises TransportError: When the HTTP request fails.
+        :raises TransportError: When the network request fails.
         """
         if delay:
             await asyncio.sleep(delay, loop=self._loop)
@@ -188,8 +315,8 @@ class LongPollingTransport:
         connection_types = list(connection_types)
         # make sure that the supported connection types list contains this
         # transport
-        if self.NAME not in connection_types:
-            connection_types.append(self.NAME)
+        if self.name not in connection_types:
+            connection_types.append(self.name)
 
         # send message and await its response
         response_message = \
@@ -201,28 +328,6 @@ class LongPollingTransport:
             self._client_id = response_message.get("clientId")
             self._subscribe_on_connect = True
         return response_message
-
-    async def _get_http_session(self):
-        """Factory method for getting the current HTTP session
-
-        :return: The current session if it's not None, otherwise it creates a
-                 new session.
-        """
-        # it would be nicer to create the session when the class gets
-        # initialized, but this seems to be the right way to do it since
-        # aiohttp produces log messages with warnings that a session should be
-        # created in a coroutine
-        if self._http_session is None:
-            self._http_session = aiohttp.ClientSession()
-        return self._http_session
-
-    async def _close_http_session(self):
-        """Close the http session if it's not already closed"""
-        # graceful shutdown recommended by the documentation
-        # https://aiohttp.readthedocs.io/en/stable/client_advanced.html#graceful-shutdown
-        if self._http_session is not None and not self._http_session.closed:
-            await self._http_session.close()
-            await asyncio.sleep(self._HTTP_SESSION_CLOSE_TIMEOUT)
 
     def _finalize_message(self, message):
         """Update the ``id`` and ``clientId`` message fields as a side effect
@@ -236,6 +341,9 @@ class LongPollingTransport:
 
         if "clientId" in message:
             message["clientId"] = self.client_id
+
+        if "connectionType" in message:
+            message["connectionType"] = self.name
 
     def _finalize_payload(self, payload):
         """Update the ``id`` and ``clientId`` message fields in the *payload*,
@@ -251,7 +359,8 @@ class LongPollingTransport:
         else:
             self._finalize_message(payload)
 
-    async def _send_message(self, message, additional_messages=None, **kwargs):
+    async def _send_message(self, message, additional_messages=None,
+                            consume_server_errors=False, **kwargs):
         """Send message to server
 
         :param dict message: A finalized or a template message
@@ -260,42 +369,58 @@ class LongPollingTransport:
         Note that the options in *kwargs* will not be applied to these \
         messages, they should be prepared in advance.
         :type additional_messages: list[dict] or None
+        :param bool consume_server_errors: Consume server side error \
+        messages which could not or should not be handled by the transport. \
+        Let the consumers decide how to deal with them. (these errors are \
+        failed confirmation messages for all channels except \
+        ``/meta/connect``, ``/meta/disconnect`` and ``/meta/handshake``). \
+        If it's True, then these messages will be enqueued for consumers.
         :param kwargs: Optional key-value pairs that'll be used to update the \
         the values in the *message*
         :return: Response message
         :rtype: dict
-        :raises TransportError: When the HTTP request fails.
+        :raises TransportError: When the network request fails.
         """
         message.update(kwargs)
         if additional_messages:
             payload = [message] + additional_messages
         else:
             payload = message
-        response_payload = await self._send_payload(payload)
-        return await self._consume_payload(response_payload,
-                                           confirm_for=message)
+        self._finalize_payload(payload)
 
-    async def _send_payload(self, payload):
-        """Send payload to server
+        return await self._send_payload(
+            payload,
+            confirm_for=message,
+            consume_server_errors=consume_server_errors)
+
+    @abstractmethod
+    async def _send_payload(self, payload, confirm_for,
+                            consume_server_errors=False):
+        """Send *payload* to server
+
+        Send the *payload* to the server and return once a confirmation
+        response message can be provided for the message specified in
+        *confirm_for*.
+        When reimplementing this method keep in mind that the server will
+        likely return additional responses which should be enqueued for
+        consumers. To enqueue the received messages :meth:`_consume_payload`
+        can be used.
 
         :param payload: A message or a list of messages
         :type payload: dict or list[dict]
-        :return: Response payload
-        :rtype: list[dict]
-        :raises TransportError: When the HTTP request fails.
+        :param dict confirm_for: Return the confirmation response message for \
+        the given *confirm_for* message.
+        :param bool consume_server_errors: Consume server side error \
+        messages which could not or should not be handled by the transport. \
+        Let the consumers decide how to deal with them. (these errors are \
+        failed confirmation messages for all channels except \
+        ``/meta/connect``, ``/meta/disconnect`` and ``/meta/handshake``). \
+        If it's True, then these messages will be enqueued for consumers.
+        :return: The confirmation response message for the *confirm_for*
+                 message
+        :rtype: dict
+        :raises TransportError: When the network request fails.
         """
-        self._finalize_payload(payload)
-
-        try:
-            session = await self._get_http_session()
-            async with self._http_semaphore:
-                response = await session.post(self._endpoint, json=payload,
-                                              ssl=self.ssl)
-            response_payload = await response.json()
-        except aiohttp.client_exceptions.ClientError as error:
-            logger.debug("Failed to send payload, {}".format(error))
-            raise TransportError(str(error)) from error
-        return response_payload
 
     def _is_confirmation(self, response_message, message):
         """Check whether the *response_message* is a confirmation for the
@@ -316,6 +441,9 @@ class LongPollingTransport:
         return (message["channel"] == response_message["channel"] and
                 message.get("id") == response_message.get("id") and
                 "successful" in response_message)
+
+    def _on_response_consumed(self, response_message):
+        """Override to customize message consumption"""
 
     async def _consume_payload(self, payload, *, confirm_for=None,
                                consume_server_errors=False):
@@ -369,6 +497,10 @@ class LongPollingTransport:
                     message["channel"] != "/meta/handshake" and
                     not message.get("successful", True)):
                 await self.incoming_queue.put(message)
+
+            # call _on_response_consumed which can be overriden to customize
+            # message consumption
+            self._on_response_consumed(message)
 
             # check if the message is the confirmation response we're looking
             # for, if yes then set it as the result and continue
@@ -429,7 +561,7 @@ class LongPollingTransport:
         :raise TransportInvalidOperation: If the transport doesn't has a \
         client id yet, or if it's not in a :obj:`~TransportState.DISCONNECTED`\
         :obj:`state`.
-        :raises TransportError: When the HTTP request fails.
+        :raises TransportError: When the network request fails.
         """
         if not self.client_id:
             raise TransportInvalidOperation(
@@ -449,7 +581,7 @@ class LongPollingTransport:
         :type delay: None or int or float
         :return: Connect response
         :rtype: dict
-        :raises TransportError: When the HTTP request fails.
+        :raises TransportError: When the network request fails.
         """
         if delay:
             await asyncio.sleep(delay, loop=self._loop)
@@ -480,15 +612,15 @@ class LongPollingTransport:
             reconnect_timeout = self._reconnect_advice["interval"]
             if self.state == TransportState.CONNECTING:
                 self._state = TransportState.CONNECTED
-                self.connected_event.set()
-                self.connecting_event.clear()
+                self._connected_event.set()
+                self._connecting_event.clear()
         except Exception as error:
             result = error
             reconnect_timeout = self._reconnect_timeout
             if self.state == TransportState.CONNECTED:
                 self._state = TransportState.CONNECTING
-                self.connecting_event.set()
-                self.connected_event.clear()
+                self._connecting_event.set()
+                self._connected_event.clear()
 
         log_fmt = "Connect task finished with: {!r}"
         logger.debug(log_fmt.format(result))
@@ -509,7 +641,7 @@ class LongPollingTransport:
         advice = self._reconnect_advice.get("reconnect")
         # do a handshake operation if advised
         if advice == "handshake":
-            self._start_connect_task(self._handshake([self.NAME],
+            self._start_connect_task(self._handshake([self.name],
                                                      delay=reconnect_timeout))
         # do a connect operation if advised
         elif advice == "retry":
@@ -521,18 +653,23 @@ class LongPollingTransport:
                          "will be scheduled.")
             self._state = TransportState.DISCONNECTED
 
+    async def _before_disconnect(self):
+        """Called before disconnect message is sent"""
+
     async def disconnect(self):
         """Disconnect from server
 
-        :raises TransportError: When the HTTP request fails.
+        :raises TransportError: When the network request fails.
         """
         try:
             self._state = TransportState.DISCONNECTING
             await self._stop_connect_task()
             await self._send_message(self._DISCONNECT_MESSAGE.copy())
         finally:
-            await self._close_http_session()
             self._state = TransportState.DISCONNECTED
+
+    async def close(self):
+        """Close transport and release resources"""
 
     async def subscribe(self, channel):
         """Subscribe to *channel*
@@ -543,7 +680,7 @@ class LongPollingTransport:
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
-        :raises TransportError: When the HTTP request fails.
+        :raises TransportError: When the network request fails.
         """
         if self.state not in [TransportState.CONNECTING,
                               TransportState.CONNECTED]:
@@ -561,7 +698,7 @@ class LongPollingTransport:
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
-        :raises TransportError: When the HTTP request fails.
+        :raises TransportError: When the network request fails.
         """
         if self.state not in [TransportState.CONNECTING,
                               TransportState.CONNECTED]:
@@ -580,7 +717,7 @@ class LongPollingTransport:
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
-        :raises TransportError: When the HTTP request fails.
+        :raises TransportError: When the network request fails.
         """
         if self.state not in [TransportState.CONNECTING,
                               TransportState.CONNECTED]:
@@ -589,3 +726,81 @@ class LongPollingTransport:
         return await self._send_message(self._PUBLISH_MESSAGE.copy(),
                                         channel=channel,
                                         data=data)
+
+
+class LongPollingTransport(_TransportBase):
+    """Long-polling type transport"""
+    #: Timeout to give to HTTP session to close itself
+    _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
+
+    def __init__(self, *, endpoint, incoming_queue, reconnection_timeout=1,
+                 ssl=None, loop=None):
+        """
+        :param str endpoint: CometD service url
+        :param asyncio.Queue incoming_queue: Queue for consuming incoming event
+                                             messages
+        :param reconnection_timeout: The time to wait before trying to \
+        reconnect to the server after a network failure
+        :type reconnection_timeout: None or int or float
+        :param ssl: SSL validation mode. None for default SSL check \
+        (:func:`ssl.create_default_context` is used), False for skip SSL \
+        certificate validation, \
+        `aiohttp.Fingerprint <https://aiohttp.readthedocs.io/en/stable/\
+        client_reference.html#aiohttp.Fingerprint>`_ for fingerprint \
+        validation, :obj:`ssl.SSLContext` for custom SSL certificate \
+        validation.
+        :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
+                     schedule tasks. If *loop* is ``None`` then
+                     :func:`asyncio.get_event_loop` is used to get the default
+                     event loop.
+        """
+        super().__init__(name="long-polling", endpoint=endpoint,
+                         incoming_queue=incoming_queue,
+                         reconnection_timeout=reconnection_timeout, ssl=ssl,
+                         loop=loop)
+
+        #: semaphore to limit the number of concurrent HTTP connections to 2
+        self._http_semaphore = asyncio.Semaphore(2, loop=self._loop)
+        #: http session
+        self._http_session = None
+
+    async def _get_http_session(self):
+        """Factory method for getting the current HTTP session
+
+        :return: The current session if it's not None, otherwise it creates a
+                 new session.
+        """
+        # it would be nicer to create the session when the class gets
+        # initialized, but this seems to be the right way to do it since
+        # aiohttp produces log messages with warnings that a session should be
+        # created in a coroutine
+        if self._http_session is None:
+            self._http_session = aiohttp.ClientSession()
+        return self._http_session
+
+    async def _close_http_session(self):
+        """Close the http session if it's not already closed"""
+        # graceful shutdown recommended by the documentation
+        # https://aiohttp.readthedocs.io/en/stable/client_advanced.html#graceful-shutdown
+        if self._http_session is not None and not self._http_session.closed:
+            await self._http_session.close()
+            await asyncio.sleep(self._HTTP_SESSION_CLOSE_TIMEOUT)
+
+    async def _send_payload(self, payload, confirm_for,
+                            consume_server_errors=False):
+        try:
+            session = await self._get_http_session()
+            async with self._http_semaphore:
+                response = await session.post(self._endpoint, json=payload,
+                                              ssl=self.ssl)
+            response_payload = await response.json()
+        except aiohttp.client_exceptions.ClientError as error:
+            logger.debug("Failed to send payload, {}".format(error))
+            raise TransportError(str(error)) from error
+        return await self._consume_payload(
+            response_payload,
+            confirm_for=confirm_for,
+            consume_server_errors=consume_server_errors)
+
+    async def close(self):
+        await self._close_http_session()
