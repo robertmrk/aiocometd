@@ -4,7 +4,8 @@ from asynctest import TestCase, mock
 from aiohttp import ClientSession, client_exceptions
 
 from aiocometd.transport import LongPollingTransport, TransportState, \
-    _TransportBase, _WebSocket, WebSocketTransport
+    _TransportBase, _WebSocket, WebSocketTransport, transport, \
+    transport_classes, transport_types, create_transport
 from aiocometd.exceptions import TransportError, TransportInvalidOperation
 
 
@@ -1459,3 +1460,43 @@ class TestWebSocketTransport(TestCase):
         lock.__aexit__.assert_called()
         self.transport._send_socket_payload.assert_called_with(socket,
                                                                payload)
+
+
+class TestTransportFactoryFunctions(TestCase):
+    def tearDown(self):
+        transport_classes.clear()
+
+    def test_transport(self):
+        name = "fake-transport"
+
+        @transport(name)
+        class FakeTransport:
+            "FakeTransport"
+
+        obj = FakeTransport()
+
+        self.assertEqual(obj.name, name)
+        self.assertEqual(transport_classes[name], FakeTransport)
+
+    def test_transport_types(self):
+        transport_classes["test"] = None
+
+        self.assertEqual(transport_types(), transport_classes.keys())
+
+    def test_create_transport(self):
+        transport = object()
+        transport_cls = mock.MagicMock(return_value=transport)
+        transport_classes["test"] = transport_cls
+
+        result = create_transport("test", "arg", kwarg="value")
+
+        self.assertEqual(result, transport)
+        transport_cls.assert_called_with("arg", kwarg="value")
+
+    def test_create_transport_error(self):
+        name = "test"
+
+        with self.assertRaises(TransportInvalidOperation,
+                               msg="There is no transport with "
+                                   "a name {!r}".format(name)):
+            create_transport(name)

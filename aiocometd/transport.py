@@ -11,6 +11,55 @@ from .exceptions import TransportError, TransportInvalidOperation
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TRANSPORT_NAME = "long-polling"
+transport_classes = {}
+
+
+def transport(transport_name):
+    """Class decorator for registering transport classes
+
+    The class' name property will be also defined to return the given
+    *transport_name*
+    :param str transport_name: The transport type's identifier
+    :return: The updated class
+    """
+    global transport_classes
+
+    def decorator(cls):
+        transport_classes[transport_name] = cls
+
+        @property
+        def name(instance):
+            return transport_name
+
+        cls.name = name
+        return cls
+    return decorator
+
+
+def transport_types():
+    """Set of available transport type names"""
+    global transport_classes
+    return transport_classes.keys()
+
+
+def create_transport(name, *args, **kwargs):
+    """Create a transport object identified by the given *name*
+
+    :param str name: The transport type's identifier
+    :param args: Positional arguments to pass to the transport
+    :param kwargs: Keyword arguments to pass to the transport
+    :return: A transport object
+    :rtype: Transport
+    """
+    global transport_classes
+
+    if name not in transport_classes:
+        raise TransportInvalidOperation("There is no transport with a "
+                                        "name {!r}".format(name))
+
+    return transport_classes[name](*args, **kwargs)
+
 
 @unique
 class TransportState(Enum):
@@ -748,12 +797,9 @@ class _TransportBase(Transport):
                                         data=data)
 
 
+@transport(DEFAULT_TRANSPORT_NAME)
 class LongPollingTransport(_TransportBase):
     """Long-polling type transport"""
-
-    @property
-    def name(self):
-        return "long-polling"
 
     async def _send_final_payload(self, payload):
         try:
@@ -837,6 +883,7 @@ class _WebSocket:
             self._socket = self._context = None
 
 
+@transport("websocket")
 class WebSocketTransport(_TransportBase):
     """WebSocket type transport"""
 
@@ -860,10 +907,6 @@ class WebSocketTransport(_TransportBase):
                                              self.endpoint, ssl=self.ssl)
         #: exclusive lock for the _connect_websocket object
         self._connect_websocket_lock = asyncio.Lock()
-
-    @property
-    def name(self):
-        return "websocket"
 
     async def _get_socket(self, channel):
         """Get a websocket object for the given *channel*
