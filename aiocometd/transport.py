@@ -3,7 +3,6 @@ import asyncio
 import logging
 from enum import Enum, unique, auto
 from abc import ABC, abstractmethod
-import functools
 
 import aiohttp
 
@@ -776,14 +775,16 @@ class _WebSocket:
 
     This class allows us to use websockets objects without context blocks
     """
-    def __init__(self, http_session, *args, **kwargs):
+    def __init__(self, session_factory, *args, **kwargs):
         """
-        :param aiohttp.ClientSession http_session: Client HTTP session
+        :param asyncio.coroutine session_factory: Coroutine factory function \
+        which returns an HTTP session
         :param args: positional arguments for the ws_connect function
         :param kwargs: keyword arguments for the ws_connect function
         """
-        self._constructor = functools.partial(http_session.ws_connect,
-                                              *args, **kwargs)
+        self._session_factory = session_factory
+        self._constructor_args = args
+        self._constructor_kwargs = kwargs
         self._context = None
         self._socket = None
 
@@ -824,7 +825,9 @@ class _WebSocket:
 
     async def _enter(self):
         """Enter websocket context"""
-        self._context = self._constructor()
+        session = await self._session_factory()
+        self._context = session.ws_connect(*self._constructor_args,
+                                           **self._constructor_kwargs)
         self._socket = await self._context.__aenter__()
 
     async def _exit(self):
@@ -832,3 +835,96 @@ class _WebSocket:
         if self._context:
             await self._context.__aexit__(None, None, None)
             self._socket = self._context = None
+
+
+class WebSocketTransport(_TransportBase):
+    """WebSocket type transport"""
+
+    def __init__(self, *, endpoint, incoming_queue, reconnection_timeout=1,
+                 ssl=None, loop=None):
+        super().__init__(endpoint=endpoint,
+                         incoming_queue=incoming_queue,
+                         reconnection_timeout=reconnection_timeout,
+                         ssl=ssl, loop=loop)
+
+        #: channels used during the connect task, requests on these channels
+        #: are usually long running
+        self._connect_task_channels = ("/meta/handshake", "/meta/connect")
+        #: websocket for short duration requests
+        self._websocket = _WebSocket(self._get_http_session,
+                                     self.endpoint, ssl=self.ssl)
+        #: exclusive lock for the _websocket object
+        self._websocket_lock = asyncio.Lock()
+        #: websocket for long duration requests
+        self._connect_websocket = _WebSocket(self._get_http_session,
+                                             self.endpoint, ssl=self.ssl)
+        #: exclusive lock for the _connect_websocket object
+        self._connect_websocket_lock = asyncio.Lock()
+
+    @property
+    def name(self):
+        return "websocket"
+
+    async def _get_socket(self, channel):
+        """Get a websocket object for the given *channel*
+
+        Returns different websocket objects for long running and short duration
+        requests, so while a long running request is pending, short duration
+        requests can be transmitted.
+        """
+        if channel in self._connect_task_channels:
+            return await self._connect_websocket
+        else:
+            return await self._websocket
+
+    def _get_socket_lock(self, channel):
+        """Get an exclusive lock object for the given *channel*"""
+        if channel in self._connect_task_channels:
+            return self._connect_websocket_lock
+        else:
+            return self._websocket_lock
+
+    async def _send_final_payload(self, payload):
+        try:
+            # the channel of the first message
+            channel = payload[0]["channel"]
+            # get the socket and the lock associated with it, for the channel
+            # of the first message
+            socket = await self._get_socket(channel)
+            lock = self._get_socket_lock(channel)
+
+            async with lock:
+                return await self._send_socket_payload(socket, payload)
+
+        except aiohttp.client_exceptions.ClientError as error:
+            logger.debug("Failed to send payload, {}".format(error))
+            raise TransportError(str(error)) from error
+
+    async def _send_socket_payload(self, socket, payload):
+        """Send *payload* to the server on the given *socket*
+
+        :param socket: WebSocket object
+        :type socket: `aiohttp.ClientWebSocketResponse \
+        <https://aiohttp.readthedocs.io/en/stable\
+        /client_reference.html#aiohttp.ClientWebSocketResponse>`_
+        :param list[dict] payload: A message or a list of messages
+        :return: Response payload
+        :rtype: list[dict]
+        :raises TransportError: When the request fails.
+        """
+        # receive responses from the server and consume them,
+        # until we get back the response for the first message in the *payload*
+        await socket.send_json(payload)
+        while True:
+            response = await socket.receive()
+            response_payload = response.json()
+            matching_response = await self._consume_payload(
+                response_payload,
+                find_response_for=payload[0])
+            if matching_response:
+                return matching_response
+
+    async def close(self):
+        await self._websocket.close()
+        await self._connect_websocket.close()
+        await self._close_http_session()
