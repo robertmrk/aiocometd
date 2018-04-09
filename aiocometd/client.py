@@ -107,7 +107,7 @@ class Client:
             ssl=self.ssl
         )
 
-        response = await self._transport.handshake([self._transport.NAME])
+        response = await self._transport.handshake([self._transport.name])
         self._verify_response(response)
 
         response = await self._transport.connect()
@@ -117,7 +117,8 @@ class Client:
     async def close(self):
         """Disconnect from the CometD server"""
         try:
-            await self._transport.disconnect()
+            if self._transport.client_id:
+                await self._transport.disconnect()
 
         # Don't raise TransportError if disconnect fails. Event if the
         # request fails, and the server doesn't gets notified about the
@@ -127,6 +128,7 @@ class Client:
         except TransportError as error:
             logger.debug("Disconnect request failed, {}".format(error))
         finally:
+            await self._transport.close()
             self._closed = True
 
     async def subscribe(self, channel):
@@ -322,9 +324,9 @@ class Client:
         connection fails.
         """
         while True:
-            await self._transport.connecting_event.wait()
+            await self._transport.wait_for_connecting()
             try:
-                await asyncio.wait_for(self._transport.connected_event.wait(),
+                await asyncio.wait_for(self._transport.wait_for_connected(),
                                        timeout, loop=self._loop)
             except asyncio.TimeoutError:
                 break

@@ -3,15 +3,21 @@ import asyncio
 from asynctest import TestCase, mock
 from aiohttp import ClientSession, client_exceptions
 
-from aiocometd.transport import LongPollingTransport, TransportState
+from aiocometd.transport import LongPollingTransport, TransportState, \
+    _TransportBase, _WebSocket, WebSocketTransport
 from aiocometd.exceptions import TransportError, TransportInvalidOperation
 
 
-class TestLongPollingTransport(TestCase):
+class TransportBase(_TransportBase):
+    async def _send_final_payload(self, payload):
+        pass
+
+
+class TestTransportBase(TestCase):
     def setUp(self):
-        self.transport = LongPollingTransport(endpoint="example.com/cometd",
-                                              incoming_queue=None,
-                                              loop=None)
+        self.transport = TransportBase(endpoint="example.com/cometd",
+                                       incoming_queue=None,
+                                       loop=None)
 
     async def long_task(self, result, timeout=None):
         if timeout:
@@ -24,9 +30,9 @@ class TestLongPollingTransport(TestCase):
     def test_init_with_loop(self):
         loop = object()
 
-        transport = LongPollingTransport(endpoint=None,
-                                         incoming_queue=None,
-                                         loop=loop)
+        transport = TransportBase(endpoint=None,
+                                  incoming_queue=None,
+                                  loop=loop)
 
         self.assertIs(transport._loop, loop)
         self.assertEqual(transport.state, TransportState.DISCONNECTED)
@@ -36,69 +42,11 @@ class TestLongPollingTransport(TestCase):
         loop = object()
         asyncio_mock.get_event_loop.return_value = loop
 
-        transport = LongPollingTransport(endpoint=None,
-                                         incoming_queue=None)
+        transport = TransportBase(endpoint=None,
+                                  incoming_queue=None)
 
         self.assertIs(transport._loop, loop)
         self.assertEqual(transport.state, TransportState.DISCONNECTED)
-
-    def test_finalize_message_updates_fields(self):
-        message = {
-            "field": "value",
-            "id": None,
-            "clientId": None
-        }
-        self.transport._client_id = "client_id"
-
-        self.transport._finalize_message(message)
-
-        self.assertEqual(message["id"], str(0))
-        self.assertEqual(self.transport._message_id, 1)
-        self.assertEqual(message["clientId"], self.transport.client_id)
-
-    def test_finalize_message_ignores_non_existing_fields(self):
-        message = {
-            "field": "value"
-        }
-        self.transport._client_id = "client_id"
-
-        self.transport._finalize_message(message)
-
-        self.assertEqual(list(message.keys()), ["field"])
-        self.assertEqual(message["field"], "value")
-
-    def test_finalize_payload_single_message(self):
-        payload = {
-            "field": "value",
-            "id": None,
-            "clientId": None
-        }
-        self.transport._finalize_message = mock.MagicMock()
-
-        self.transport._finalize_payload(payload)
-
-        self.transport._finalize_message.assert_called_once_with(payload)
-
-    def test_finalize_payload_multiple_messages(self):
-        payload = [
-            {
-                "field": "value",
-                "id": None,
-                "clientId": None
-            },
-            {
-                "field2": "value2",
-                "id": None,
-                "clientId": None
-            }
-        ]
-        self.transport._finalize_message = mock.MagicMock()
-
-        self.transport._finalize_payload(payload)
-
-        self.transport._finalize_message.assert_has_calls([
-            mock.call(payload[0]), mock.call(payload[1])
-        ])
 
     async def test_get_http_session(self):
         self.transport._http_session = ClientSession()
@@ -129,92 +77,69 @@ class TestLongPollingTransport(TestCase):
         asyncio_mock.sleep.assert_called_with(
             self.transport._HTTP_SESSION_CLOSE_TIMEOUT)
 
-    async def test_send_payload(self):
-        self.transport._client_id = "clientId"
-        self._message_id = 0
-        resp_data = [{
-            "channel": "test/channel3",
-            "id": 4
-        }]
-        response_mock = mock.MagicMock()
-        response_mock.json = mock.CoroutineMock(return_value=resp_data)
-        session = mock.MagicMock()
-        session.post = mock.CoroutineMock(return_value=response_mock)
-        self.transport._get_http_session = \
-            mock.CoroutineMock(return_value=session)
-        self.transport._http_semaphore = mock.MagicMock()
+    def test_finalize_message_updates_fields(self):
+        message = {
+            "field": "value",
+            "id": None,
+            "clientId": None,
+            "connectionType": None
+        }
+        self.transport._client_id = "client_id"
+
+        self.transport._finalize_message(message)
+
+        self.assertEqual(message["id"], str(0))
+        self.assertEqual(self.transport._message_id, 1)
+        self.assertEqual(message["clientId"], self.transport.client_id)
+        self.assertEqual(message["connectionType"], self.transport.name)
+
+    def test_finalize_message_ignores_non_existing_fields(self):
+        message = {
+            "field": "value"
+        }
+        self.transport._client_id = "client_id"
+
+        self.transport._finalize_message(message)
+
+        self.assertEqual(list(message.keys()), ["field"])
+        self.assertEqual(message["field"], "value")
+
+    def test_finalize_payload_single_message(self):
+        payload = {
+            "field": "value",
+            "id": None,
+            "clientId": None
+        }
+        self.transport._finalize_message = mock.MagicMock()
+
+        self.transport._finalize_payload(payload)
+
+        self.transport._finalize_message.assert_called_once_with(payload)
+
+    def test_finalize_payload_multiple_messages(self):
         payload = [
             {
+                "field": "value",
                 "id": None,
                 "clientId": None,
-                "channel": "/test/channel1"
+                "connectionType": None
             },
             {
+                "field2": "value2",
                 "id": None,
                 "clientId": None,
-                "channel": "/test/channel2"
+                "connectionType": None
             }
         ]
-        self.transport.ssl = object()
+        self.transport._finalize_message = mock.MagicMock()
 
-        response = await self.transport._send_payload(payload)
+        self.transport._finalize_payload(payload)
 
-        self.assertEqual(response, resp_data)
-        self.transport._http_semaphore.__aenter__.assert_called()
-        self.transport._http_semaphore.__aexit__.assert_called()
-        session.post.assert_called_with(self.transport._endpoint,
-                                        json=payload,
-                                        ssl=self.transport.ssl)
-        for i, message in enumerate(payload):
-            self.assertEqual(message["id"], str(i))
-            self.assertEqual(message["clientId"], self.transport.client_id)
+        self.transport._finalize_message.assert_has_calls([
+            mock.call(payload[0]), mock.call(payload[1])
+        ])
 
-    async def test_send_payload_client_error(self):
-        self.transport._client_id = "clientId"
-        self._message_id = 0
-        resp_data = [{
-            "channel": "test/channel3",
-            "id": 4
-        }]
-        response_mock = mock.MagicMock()
-        response_mock.json = mock.CoroutineMock(return_value=resp_data)
-        session = mock.MagicMock()
-        post_exception = client_exceptions.ClientError("client error")
-        session.post = mock.CoroutineMock(side_effect=post_exception)
-        self.transport._get_http_session = \
-            mock.CoroutineMock(return_value=session)
-        self.transport._http_semaphore = mock.MagicMock()
-        payload = [
-            {
-                "id": None,
-                "clientId": None,
-                "channel": "/test/channel1"
-            },
-            {
-                "id": None,
-                "clientId": None,
-                "channel": "/test/channel2"
-            }
-        ]
-        self.transport.ssl = object()
-
-        with self.assertLogs("aiocometd.transport", level="DEBUG") as log:
-            with self.assertRaisesRegex(TransportError, str(post_exception)):
-                await self.transport._send_payload(payload)
-
-        log_message = "DEBUG:aiocometd.transport:" \
-                      "Failed to send payload, {}".format(post_exception)
-        self.assertEqual(log.output, [log_message])
-        self.transport._http_semaphore.__aenter__.assert_called()
-        self.transport._http_semaphore.__aexit__.assert_called()
-        session.post.assert_called_with(self.transport._endpoint,
-                                        json=payload,
-                                        ssl=self.transport.ssl)
-        for i, message in enumerate(payload):
-            self.assertEqual(message["id"], str(i))
-            self.assertEqual(message["clientId"], self.transport.client_id)
-
-    def test_is_confirmation(self):
+    def test_is_matching_response(self):
         message = {
             "channel": "/test/channel1",
             "data": {},
@@ -228,9 +153,34 @@ class TestLongPollingTransport(TestCase):
             "id": "1"
         }
 
-        self.assertTrue(self.transport._is_confirmation(response, message))
+        self.assertTrue(self.transport._is_matching_response(response,
+                                                             message))
 
-    def test_is_confirmation_without_id(self):
+    def test_is_matching_response_response_none(self):
+        message = {
+            "channel": "/test/channel1",
+            "data": {},
+            "clientId": "clientId",
+            "id": "1"
+        }
+        response = None
+
+        self.assertFalse(self.transport._is_matching_response(response,
+                                                              message))
+
+    def test_is_matching_response_message_none(self):
+        message = None
+        response = {
+            "channel": "/test/channel1",
+            "successful": True,
+            "clientId": "clientId",
+            "id": "1"
+        }
+
+        self.assertFalse(self.transport._is_matching_response(response,
+                                                              message))
+
+    def test_is_matching_response_without_id(self):
         message = {
             "channel": "/test/channel1",
             "data": {},
@@ -242,9 +192,10 @@ class TestLongPollingTransport(TestCase):
             "clientId": "clientId",
         }
 
-        self.assertTrue(self.transport._is_confirmation(response, message))
+        self.assertTrue(self.transport._is_matching_response(response,
+                                                             message))
 
-    def test_is_confirmation_different_id(self):
+    def test_is_matching_response_different_id(self):
         message = {
             "channel": "/test/channel1",
             "data": {},
@@ -258,9 +209,10 @@ class TestLongPollingTransport(TestCase):
             "id": "2"
         }
 
-        self.assertFalse(self.transport._is_confirmation(response, message))
+        self.assertFalse(self.transport._is_matching_response(response,
+                                                              message))
 
-    def test_is_confirmation_different_channel(self):
+    def test_is_matching_response_different_channel(self):
         message = {
             "channel": "/test/channel1",
             "data": {},
@@ -274,9 +226,10 @@ class TestLongPollingTransport(TestCase):
             "id": "1"
         }
 
-        self.assertFalse(self.transport._is_confirmation(response, message))
+        self.assertFalse(self.transport._is_matching_response(response,
+                                                              message))
 
-    def test_is_confirmation_without_successful_field(self):
+    def test_is_matching_response_without_successful_field(self):
         message = {
             "channel": "/test/channel1",
             "data": {},
@@ -289,194 +242,319 @@ class TestLongPollingTransport(TestCase):
             "id": "1"
         }
 
-        self.assertFalse(self.transport._is_confirmation(response, message))
+        self.assertFalse(self.transport._is_matching_response(response,
+                                                              message))
 
-    async def test_consume_payload(self):
-        payload = [
-            # event message
-            {
-                "channel": "/test/channel1",
-                "data": {"key": "value"},
-                "id": "1"
-            },
-            # connect confirmation
-            {
-                "channel": "/meta/connect",
-                "successful": True,
-                "advice": {"interval": 0, "reconnect": "retry"},
-                "id": "2"
-            },
-            # subscribe confirmation, success
-            {
-                "channel": "/meta/subscribe",
-                "subscription": "/test/channel1",
-                "successful": True,
-                "id": "3"
-            },
-            # subscribe confirmation, failure
-            {
-                "channel": "/meta/subscribe",
-                "subscription": "/test/channel2",
-                "successful": False,
-                "id": "4"
-            },
-            # connect confirmation
-            {
-                "channel": "/meta/connect",
-                "successful": True,
-                "advice": {"interval": 2, "reconnect": "none"},
-                "id": "5"
-            },
-            # service confirmation, failure
-            {
-                "channel": "/service/test",
-                "successful": False,
-                "id": "6"
-            },
-            # unsubscribe confirmation, success
-            {
-                "channel": "/meta/unsubscribe",
-                "subscription": "/test/channel3",
-                "successful": True,
-                "id": "7"
-            },
-            # unsubscribe confirmation, failure
-            {
-                "channel": "/meta/unsubscribe",
-                "subscription": "/test/channel4",
-                "successful": False,
-                "id": "8"
-            }
-        ]
-        self.transport.incoming_queue = asyncio.Queue()
-        self.transport._subscriptions = {"/test/channel2",
-                                         "/test/channel3",
-                                         "/test/channel4"}
-
-        result = await self.transport._consume_payload(payload)
-
-        self.assertIsNone(result)
-        self.assertEqual(self.transport._reconnect_advice,
-                         payload[4]["advice"])
-        consumed_messages = []
-        while not self.transport.incoming_queue.empty():
-            consumed_messages.append(await self.transport.incoming_queue.get())
-        self.assertEqual(consumed_messages, [payload[0]])
-        self.assertEqual(self.transport.subscriptions,
-                         {"/test/channel1", "/test/channel4"})
-
-    async def test_consume_payload_with_confirm_and_subscription(self):
+    def assert_server_error_message_for_channel(self, channel, successful,
+                                                expected_result):
         message = {
+            "channel": channel,
+            "successful": successful
+        }
+
+        result = self.transport._is_server_error_message(message)
+
+        self.assertEqual(result, expected_result)
+
+    def test_is_server_error_message_subscribe(self):
+        channel = "/meta/subscribe"
+        self.assert_server_error_message_for_channel(channel, False, True)
+        self.assert_server_error_message_for_channel(channel, True, False)
+
+    def test_is_server_error_message_unsubscribe(self):
+        channel = "/meta/unsubscribe"
+        self.assert_server_error_message_for_channel(channel, False, True)
+        self.assert_server_error_message_for_channel(channel, True, False)
+
+    def test_is_server_error_message_non_meta_channel(self):
+        channel = "/test/channel"
+        self.assert_server_error_message_for_channel(channel, False, True)
+        self.assert_server_error_message_for_channel(channel, True, False)
+
+    def test_is_server_error_message_service_channel(self):
+        channel = "/service/test"
+        self.assert_server_error_message_for_channel(channel, False, True)
+        self.assert_server_error_message_for_channel(channel, True, False)
+
+    def test_is_server_error_message_handshake(self):
+        channel = "/meta/handshake"
+        self.assert_server_error_message_for_channel(channel, False, False)
+        self.assert_server_error_message_for_channel(channel, True, False)
+
+    def test_is_server_error_message_connect(self):
+        channel = "/meta/connect"
+        self.assert_server_error_message_for_channel(channel, False, False)
+        self.assert_server_error_message_for_channel(channel, True, False)
+
+    def test_is_server_error_message_disconnect(self):
+        channel = "/meta/disconnect"
+        self.assert_server_error_message_for_channel(channel, False, False)
+        self.assert_server_error_message_for_channel(channel, True, False)
+
+    def assert_event_message_for_channel(self, channel, has_data,
+                                         expected_result):
+        message = dict(channel=channel)
+        if has_data:
+            message["data"] = None
+
+        result = self.transport._is_event_message(message)
+
+        self.assertEqual(result, expected_result)
+
+    def test_is_event_message_subscribe(self):
+        channel = "/meta/subscribe"
+        self.assert_event_message_for_channel(channel, False, False)
+        self.assert_event_message_for_channel(channel, True, False)
+
+    def test_is_event_message_unsubscribe(self):
+        channel = "/meta/unsubscribe"
+        self.assert_event_message_for_channel(channel, False, False)
+        self.assert_event_message_for_channel(channel, True, False)
+
+    def test_is_event_message_non_meta_channel(self):
+        channel = "/test/channel"
+        self.assert_event_message_for_channel(channel, False, False)
+        self.assert_event_message_for_channel(channel, True, True)
+
+    def test_is_event_message_service_channel(self):
+        channel = "/service/test"
+        self.assert_event_message_for_channel(channel, False, False)
+        self.assert_event_message_for_channel(channel, True, False)
+
+    def test_is_event_message_handshake(self):
+        channel = "/meta/handshake"
+        self.assert_event_message_for_channel(channel, False, False)
+        self.assert_event_message_for_channel(channel, True, False)
+
+    def test_is_event_message_connect(self):
+        channel = "/meta/connect"
+        self.assert_event_message_for_channel(channel, False, False)
+        self.assert_event_message_for_channel(channel, True, False)
+
+    def test_is_event_message_disconnect(self):
+        channel = "/meta/disconnect"
+        self.assert_event_message_for_channel(channel, False, False)
+        self.assert_event_message_for_channel(channel, True, False)
+
+    def test_consume_message(self):
+        self.transport._is_event_message = mock.MagicMock(return_value=False)
+        self.transport._is_server_error_message = \
+            mock.MagicMock(return_value=False)
+        self.transport._enqueue_message = mock.MagicMock()
+        response_message = object()
+
+        self.transport._consume_message(response_message)
+
+        self.transport._is_server_error_message.assert_called_with(
+            response_message)
+        self.transport._is_event_message.assert_called_with(response_message)
+        self.transport._enqueue_message.assert_not_called()
+
+    def test_consume_message_event_message(self):
+        self.transport._is_event_message = mock.MagicMock(return_value=True)
+        self.transport._is_server_error_message = \
+            mock.MagicMock(return_value=False)
+        self.transport._enqueue_message = mock.MagicMock()
+        response_message = object()
+
+        self.transport._consume_message(response_message)
+
+        self.transport._is_event_message.assert_called_with(response_message)
+        self.transport._enqueue_message.assert_called_with(response_message)
+
+    def test_consume_message_server_error_message(self):
+        self.transport._is_event_message = mock.MagicMock(return_value=False)
+        self.transport._is_server_error_message = \
+            mock.MagicMock(return_value=True)
+        self.transport._enqueue_message = mock.MagicMock()
+        response_message = object()
+
+        self.transport._consume_message(response_message)
+
+        self.transport._is_server_error_message.assert_called_with(
+            response_message)
+        self.transport._enqueue_message.assert_called_with(response_message)
+
+    def test_update_subscriptions_new_subscription_success(self):
+        response_message = {
             "channel": "/meta/subscribe",
             "subscription": "/test/channel1",
+            "successful": True,
             "id": "3"
         }
+        self.transport._subscriptions = set()
+
+        self.transport._update_subscriptions(response_message)
+
+        self.assertEqual(self.transport.subscriptions,
+                         set([response_message["subscription"]]))
+
+    def test_update_subscriptions_existing_subscription_success(self):
+        response_message = {
+            "channel": "/meta/subscribe",
+            "subscription": "/test/channel1",
+            "successful": True,
+            "id": "3"
+        }
+        self.transport._subscriptions = set([response_message["subscription"]])
+
+        self.transport._update_subscriptions(response_message)
+
+        self.assertEqual(self.transport.subscriptions,
+                         set([response_message["subscription"]]))
+
+    def test_update_subscriptions_new_subscription_fail(self):
+        response_message = {
+            "channel": "/meta/subscribe",
+            "subscription": "/test/channel1",
+            "successful": False,
+            "id": "3"
+        }
+        self.transport._subscriptions = set()
+
+        self.transport._update_subscriptions(response_message)
+
+        self.assertEqual(self.transport.subscriptions, set())
+
+    def test_update_subscriptions_existing_subscription_fail(self):
+        response_message = {
+            "channel": "/meta/subscribe",
+            "subscription": "/test/channel1",
+            "successful": False,
+            "id": "3"
+        }
+        self.transport._subscriptions = set([response_message["subscription"]])
+
+        self.transport._update_subscriptions(response_message)
+
+        self.assertEqual(self.transport.subscriptions, set())
+
+    def test_update_subscriptions_new_unsubscription_success(self):
+        response_message = {
+            "channel": "/meta/unsubscribe",
+            "subscription": "/test/channel1",
+            "successful": True,
+            "id": "3"
+        }
+        self.transport._subscriptions = set()
+
+        self.transport._update_subscriptions(response_message)
+
+        self.assertEqual(self.transport.subscriptions, set())
+
+    def test_update_subscriptions_existing_unsubscription_success(self):
+        response_message = {
+            "channel": "/meta/unsubscribe",
+            "subscription": "/test/channel1",
+            "successful": True,
+            "id": "3"
+        }
+        self.transport._subscriptions = set([response_message["subscription"]])
+
+        self.transport._update_subscriptions(response_message)
+
+        self.assertEqual(self.transport.subscriptions, set())
+
+    def test_update_subscriptions_new_unsubscription_fail(self):
+        response_message = {
+            "channel": "/meta/unsubscribe",
+            "subscription": "/test/channel1",
+            "successful": False,
+            "id": "3"
+        }
+        self.transport._subscriptions = set()
+
+        self.transport._update_subscriptions(response_message)
+
+        self.assertEqual(self.transport.subscriptions, set())
+
+    def test_update_subscriptions_existing_unsubscription_fail(self):
+        response_message = {
+            "channel": "/meta/unsubscribe",
+            "subscription": "/test/channel1",
+            "successful": False,
+            "id": "3"
+        }
+        self.transport._subscriptions = set([response_message["subscription"]])
+
+        self.transport._update_subscriptions(response_message)
+
+        self.assertEqual(self.transport.subscriptions,
+                         set([response_message["subscription"]]))
+
+    async def test_consume_payload_matching_without_advice(self):
         payload = [
-            # event message
             {
-                "channel": "/test/channel1",
-                "data": {"key": "value"},
+                "channel": "/meta/connect",
+                "successful": True,
                 "id": "1"
-            },
-            # connect confirmation
+            }
+        ]
+        message = object()
+        self.transport._update_subscriptions = mock.MagicMock()
+        self.transport._is_matching_response = \
+            mock.MagicMock(return_value=True)
+        self.transport._consume_message = mock.MagicMock()
+
+        result = await self.transport._consume_payload(
+            payload, find_response_for=message)
+
+        self.assertEqual(result, payload[0])
+        self.assertEqual(self.transport._reconnect_advice, {})
+        self.transport._update_subscriptions.assert_called_with(payload[0])
+        self.transport._is_matching_response.assert_called_with(payload[0],
+                                                                message)
+        self.transport._consume_message.assert_not_called()
+
+    async def test_consume_payload_matching_with_advice(self):
+        payload = [
             {
                 "channel": "/meta/connect",
                 "successful": True,
                 "advice": {"interval": 0, "reconnect": "retry"},
-                "id": "2"
-            },
-            # subscribe confirmation, success
-            {
-                "channel": "/meta/subscribe",
-                "subscription": "/test/channel1",
-                "successful": True,
-                "id": "3"
-            },
-            # subscribe confirmation, failure
-            {
-                "channel": "/meta/subscribe",
-                "subscription": "/test/channel2",
-                "successful": False,
-                "id": "4"
-            },
-            # connect confirmation
+                "id": "1"
+            }
+        ]
+        message = object()
+        self.transport._update_subscriptions = mock.MagicMock()
+        self.transport._is_matching_response = \
+            mock.MagicMock(return_value=True)
+        self.transport._consume_message = mock.MagicMock()
+
+        result = await self.transport._consume_payload(
+            payload, find_response_for=message)
+
+        self.assertEqual(result, payload[0])
+        self.assertEqual(self.transport._reconnect_advice,
+                         payload[0]["advice"])
+        self.transport._update_subscriptions.assert_called_with(payload[0])
+        self.transport._is_matching_response.assert_called_with(payload[0],
+                                                                message)
+        self.transport._consume_message.assert_not_called()
+
+    async def test_consume_payload_non_matching(self):
+        payload = [
             {
                 "channel": "/meta/connect",
                 "successful": True,
-                "advice": {"interval": 2, "reconnect": "none"},
-                "id": "5"
-            },
-            # service confirmation, failure
-            {
-                "channel": "/service/test",
-                "successful": False,
-                "id": "6"
-            },
-            # unsubscribe confirmation, success
-            {
-                "channel": "/meta/unsubscribe",
-                "subscription": "/test/channel3",
-                "successful": True,
-                "id": "7"
-            },
-            # unsubscribe confirmation, failure
-            {
-                "channel": "/meta/unsubscribe",
-                "subscription": "/test/channel4",
-                "successful": False,
-                "id": "8"
+                "id": "1"
             }
         ]
-        self.transport.incoming_queue = asyncio.Queue()
-        self.transport._subscriptions = {"/test/channel2",
-                                         "/test/channel3",
-                                         "/test/channel4"}
+        message = None
+        self.transport._update_subscriptions = mock.MagicMock()
+        self.transport._is_matching_response = \
+            mock.MagicMock(return_value=False)
+        self.transport._consume_message = mock.MagicMock()
 
-        result = \
-            await self.transport._consume_payload(payload,
-                                                  confirm_for=message,
-                                                  consume_server_errors=True)
-
-        self.assertIs(result, payload[2])
-        self.assertEqual(self.transport._reconnect_advice,
-                         payload[4]["advice"])
-
-        consumed_messages = []
-        while not self.transport.incoming_queue.empty():
-            consumed_messages.append(await self.transport.incoming_queue.get())
-        self.assertEqual(len(consumed_messages), 4)
-        self.assertEqual(consumed_messages[0], payload[0])
-        self.assertEqual(consumed_messages[1], payload[3])
-        self.assertEqual(consumed_messages[2], payload[5])
-        self.assertEqual(consumed_messages[3], payload[7])
-        self.assertEqual(self.transport.subscriptions,
-                         {"/test/channel1", "/test/channel4"})
-
-    async def test_consume_payload_queue_full(self):
-        message = {
-            "channel": "/test/channel1",
-            "data": {"key": "value"},
-            "id": "1"
-        }
-        payload = [
-            # event message
-            {
-                "channel": "/test/channel1",
-                "data": {"key": "value"},
-                "id": "2"
-            }
-        ]
-        self.transport.incoming_queue = asyncio.Queue(maxsize=1)
-        await self.transport.incoming_queue.put(message)
-
-        result = await self.transport._consume_payload(payload)
+        result = await self.transport._consume_payload(
+            payload, find_response_for=message)
 
         self.assertIsNone(result)
-        consumed_messages = []
-        while not self.transport.incoming_queue.empty():
-            consumed_messages.append(await self.transport.incoming_queue.get())
-        self.assertEqual(len(consumed_messages), 1)
-        self.assertEqual(consumed_messages[0], message)
+        self.assertEqual(self.transport._reconnect_advice, {})
+        self.transport._update_subscriptions.assert_called_with(payload[0])
+        self.transport._is_matching_response.assert_called_with(payload[0],
+                                                                message)
+        self.transport._consume_message.assert_called_with(payload[0])
 
     def test_enqueu_message(self):
         self.transport.incoming_queue = mock.MagicMock()
@@ -518,58 +596,15 @@ class TestLongPollingTransport(TestCase):
             "id": "1"
         }
         response = object()
-        response_payload = object()
         self.transport._send_payload = \
-            mock.CoroutineMock(return_value=response_payload)
-        self.transport._consume_payload = \
             mock.CoroutineMock(return_value=response)
 
         result = await self.transport._send_message(message,
-                                                    clientId="fake_id",
-                                                    id="2")
+                                                    field="value")
 
         self.assertIs(result, response)
-        self.assertEqual(message["clientId"], "fake_id")
-        self.assertEqual(message["id"], "2")
-        self.transport._send_payload.assert_called_with(message)
-        self.transport._consume_payload.assert_called_with(response_payload,
-                                                           confirm_for=message)
-
-    async def test_send_message_with_additional_messages(self):
-        message = {
-            "channel": "/test/channel1",
-            "data": {},
-            "clientId": None,
-            "id": "1"
-        }
-        additional_messages = [
-            {
-                "channel": "/test/channel2",
-                "data": {},
-                "clientId": None,
-                "id": "2"
-            }
-        ]
-        response = object()
-        response_payload = object()
-        self.transport._send_payload = \
-            mock.CoroutineMock(return_value=response_payload)
-        self.transport._consume_payload = \
-            mock.CoroutineMock(return_value=response)
-
-        result = await self.transport._send_message(
-            message,
-            additional_messages=additional_messages,
-            clientId="fake_id",
-            id="2")
-
-        self.assertIs(result, response)
-        self.assertEqual(message["clientId"], "fake_id")
-        self.assertEqual(message["id"], "2")
-        self.transport._send_payload.assert_called_with(
-            [message] + additional_messages)
-        self.transport._consume_payload.assert_called_with(response_payload,
-                                                           confirm_for=message)
+        self.assertEqual(message["field"], "value")
+        self.transport._send_payload.assert_called_with([message])
 
     @mock.patch("aiocometd.transport.asyncio.sleep")
     async def test_handshake(self, sleep):
@@ -595,7 +630,7 @@ class TestLongPollingTransport(TestCase):
         sleep.assert_not_called()
         self.transport._send_message.assert_called_with(
             message,
-            supportedConnectionTypes=connection_types + ["long-polling"])
+            supportedConnectionTypes=connection_types + [self.transport.name])
         self.assertEqual(self.transport.client_id, response["clientId"])
         self.assertTrue(self.transport._subscribe_on_connect)
 
@@ -623,7 +658,7 @@ class TestLongPollingTransport(TestCase):
         sleep.assert_called_with(5, loop=self.loop)
         self.transport._send_message.assert_called_with(
             message,
-            supportedConnectionTypes=connection_types + ["long-polling"])
+            supportedConnectionTypes=connection_types + [self.transport.name])
         self.assertEqual(self.transport.client_id, None)
         self.assertFalse(self.transport._subscribe_on_connect)
 
@@ -654,18 +689,15 @@ class TestLongPollingTransport(TestCase):
             "advice": {"interval": 0, "reconnect": "retry"},
             "id": "2"
         }
-        self.transport._send_message = \
+        self.transport._send_payload = \
             mock.CoroutineMock(return_value=response)
 
         result = await self.transport._connect()
 
         self.assertEqual(result, response)
         sleep.assert_not_called()
-        self.transport._send_message.assert_called_with(
-            self.transport._CONNECT_MESSAGE,
-            additional_messages=None,
-            consume_server_errors=True
-        )
+        self.transport._send_payload.assert_called_with(
+            [self.transport._CONNECT_MESSAGE])
         self.assertFalse(self.transport._subscribe_on_connect)
 
     @mock.patch("aiocometd.transport.asyncio.sleep")
@@ -677,18 +709,15 @@ class TestLongPollingTransport(TestCase):
             "advice": {"interval": 0, "reconnect": "retry"},
             "id": "2"
         }
-        self.transport._send_message = \
+        self.transport._send_payload = \
             mock.CoroutineMock(return_value=response)
 
         result = await self.transport._connect(5)
 
         self.assertEqual(result, response)
         sleep.assert_called_with(5, loop=self.transport._loop)
-        self.transport._send_message.assert_called_with(
-            self.transport._CONNECT_MESSAGE,
-            additional_messages=None,
-            consume_server_errors=True
-        )
+        self.transport._send_payload.assert_called_with(
+            [self.transport._CONNECT_MESSAGE])
         self.assertFalse(self.transport._subscribe_on_connect)
 
     async def test__connect_subscribe_on_connect(self):
@@ -705,17 +734,14 @@ class TestLongPollingTransport(TestCase):
             message = self.transport._SUBSCRIBE_MESSAGE.copy()
             message["subscription"] = subscription
             additional_messages.append(message)
-        self.transport._send_message = \
+        self.transport._send_payload = \
             mock.CoroutineMock(return_value=response)
 
         result = await self.transport._connect()
 
         self.assertEqual(result, response)
-        self.transport._send_message.assert_called_with(
-            self.transport._CONNECT_MESSAGE,
-            additional_messages=additional_messages,
-            consume_server_errors=True
-        )
+        self.transport._send_payload.assert_called_with(
+            [self.transport._CONNECT_MESSAGE] + additional_messages)
         self.assertFalse(self.transport._subscribe_on_connect)
 
     async def test__connect_subscribe_on_connect_error(self):
@@ -732,17 +758,14 @@ class TestLongPollingTransport(TestCase):
             message = self.transport._SUBSCRIBE_MESSAGE.copy()
             message["subscription"] = subscription
             additional_messages.append(message)
-        self.transport._send_message = \
+        self.transport._send_payload = \
             mock.CoroutineMock(return_value=response)
 
         result = await self.transport._connect()
 
         self.assertEqual(result, response)
-        self.transport._send_message.assert_called_with(
-            self.transport._CONNECT_MESSAGE,
-            additional_messages=additional_messages,
-            consume_server_errors=True
-        )
+        self.transport._send_payload.assert_called_with(
+            [self.transport._CONNECT_MESSAGE] + additional_messages)
         self.assertTrue(self.transport._subscribe_on_connect)
 
     def test_state(self):
@@ -849,8 +872,8 @@ class TestLongPollingTransport(TestCase):
         await asyncio.wait([task])
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTING
-        self.transport.connecting_event.set()
-        self.transport.connected_event.clear()
+        self.transport._connecting_event.set()
+        self.transport._connected_event.clear()
         self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
@@ -866,8 +889,8 @@ class TestLongPollingTransport(TestCase):
             ["DEBUG:aiocometd.transport:{}".format(log_message)])
         self.transport._follow_advice.assert_called_with(1)
         self.assertEqual(self.transport.state, TransportState.CONNECTED)
-        self.assertFalse(self.transport.connecting_event.is_set())
-        self.assertTrue(self.transport.connected_event.is_set())
+        self.assertFalse(self.transport._connecting_event.is_set())
+        self.assertTrue(self.transport._connected_event.is_set())
 
     async def test_connect_done_with_error(self):
         error = RuntimeError("error")
@@ -875,8 +898,8 @@ class TestLongPollingTransport(TestCase):
         await asyncio.wait([task])
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTED
-        self.transport.connecting_event.clear()
-        self.transport.connected_event.set()
+        self.transport._connecting_event.clear()
+        self.transport._connected_event.set()
         self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
@@ -892,8 +915,8 @@ class TestLongPollingTransport(TestCase):
             ["DEBUG:aiocometd.transport:{}".format(log_message)])
         self.transport._follow_advice.assert_called_with(2)
         self.assertEqual(self.transport.state, TransportState.CONNECTING)
-        self.assertTrue(self.transport.connecting_event.is_set())
-        self.assertFalse(self.transport.connected_event.is_set())
+        self.assertTrue(self.transport._connecting_event.is_set())
+        self.assertFalse(self.transport._connected_event.is_set())
 
     async def test_connect_dont_follow_advice_on_disconnecting(self):
         task = asyncio.ensure_future(self.long_task("result"))
@@ -926,7 +949,7 @@ class TestLongPollingTransport(TestCase):
 
         self.transport._follow_advice(5)
 
-        self.transport._handshake.assert_called_with([self.transport.NAME],
+        self.transport._handshake.assert_called_with([self.transport.name],
                                                      delay=5)
         self.transport._connect.assert_not_called()
         self.transport._start_connect_task.assert_called_with(
@@ -995,7 +1018,6 @@ class TestLongPollingTransport(TestCase):
             self.transport._state = state
             self.transport._stop_connect_task = mock.CoroutineMock()
             self.transport._send_message = mock.CoroutineMock()
-            self.transport._close_http_session = mock.CoroutineMock()
 
             await self.transport.disconnect()
 
@@ -1003,7 +1025,6 @@ class TestLongPollingTransport(TestCase):
             self.transport._stop_connect_task.assert_called()
             self.transport._send_message.assert_called_with(
                 self.transport._DISCONNECT_MESSAGE)
-            self.transport._close_http_session.assert_called()
 
     async def test_subscribe(self):
         for state in [TransportState.CONNECTED, TransportState.CONNECTING]:
@@ -1101,3 +1122,340 @@ class TestLongPollingTransport(TestCase):
                     await self.transport.publish("channel", {})
 
                 self.transport._send_message.assert_not_called()
+
+    async def test_wait_for_connecting(self):
+        self.transport._connecting_event.wait = mock.CoroutineMock()
+
+        await self.transport.wait_for_connecting()
+
+        self.transport._connecting_event.wait.assert_called()
+
+    async def test_wait_for_connected(self):
+        self.transport._connected_event.wait = mock.CoroutineMock()
+
+        await self.transport.wait_for_connected()
+
+        self.transport._connected_event.wait.assert_called()
+
+    async def test_close(self):
+        self.transport._close_http_session = mock.CoroutineMock()
+
+        await self.transport.close()
+
+        self.transport._close_http_session.assert_called()
+
+    async def test_send_payload(self):
+        payload = object()
+        self.transport._finalize_payload = mock.MagicMock()
+        response = object()
+        self.transport._send_final_payload = mock.CoroutineMock(
+            return_value=response
+        )
+
+        result = await self.transport._send_payload(payload)
+
+        self.assertEqual(result, response)
+        self.transport._finalize_payload.assert_called_with(payload)
+        self.transport._send_final_payload.assert_called_with(payload)
+
+
+class TestLongPollingTransport(TestCase):
+    def setUp(self):
+        self.transport = LongPollingTransport(endpoint="example.com/cometd",
+                                              incoming_queue=None,
+                                              loop=None)
+
+    def test_name(self):
+        self.assertEqual(self.transport.name, "long-polling")
+
+    async def test_send_payload(self):
+        resp_data = [{
+            "channel": "test/channel3",
+            "data": {},
+            "id": 4
+        }]
+        response_mock = mock.MagicMock()
+        response_mock.json = mock.CoroutineMock(return_value=resp_data)
+        session = mock.MagicMock()
+        session.post = mock.CoroutineMock(return_value=response_mock)
+        self.transport._get_http_session = \
+            mock.CoroutineMock(return_value=session)
+        self.transport._http_semaphore = mock.MagicMock()
+        payload = [object(), object()]
+        self.transport.ssl = object()
+        self.transport._consume_payload = \
+            mock.CoroutineMock(return_value=resp_data[0])
+
+        response = await self.transport._send_final_payload(payload)
+
+        self.assertEqual(response, resp_data[0])
+        self.transport._http_semaphore.__aenter__.assert_called()
+        self.transport._http_semaphore.__aexit__.assert_called()
+        session.post.assert_called_with(self.transport._endpoint,
+                                        json=payload,
+                                        ssl=self.transport.ssl)
+        self.transport._consume_payload.assert_called_with(
+            resp_data,
+            find_response_for=payload[0])
+
+    async def test_send_payload_client_error(self):
+        resp_data = [{
+            "channel": "test/channel3",
+            "data": {},
+            "id": 4
+        }]
+        response_mock = mock.MagicMock()
+        response_mock.json = mock.CoroutineMock(return_value=resp_data)
+        session = mock.MagicMock()
+        post_exception = client_exceptions.ClientError("client error")
+        session.post = mock.CoroutineMock(side_effect=post_exception)
+        self.transport._get_http_session = \
+            mock.CoroutineMock(return_value=session)
+        self.transport._http_semaphore = mock.MagicMock()
+        payload = [object(), object()]
+        self.transport.ssl = object()
+        self.transport._consume_payload = \
+            mock.CoroutineMock(return_value=resp_data[0])
+
+        with self.assertLogs("aiocometd.transport", level="DEBUG") as log:
+            with self.assertRaisesRegex(TransportError, str(post_exception)):
+                await self.transport._send_final_payload(payload)
+
+        log_message = "DEBUG:aiocometd.transport:" \
+                      "Failed to send payload, {}".format(post_exception)
+        self.assertEqual(log.output, [log_message])
+        self.transport._http_semaphore.__aenter__.assert_called()
+        self.transport._http_semaphore.__aexit__.assert_called()
+        session.post.assert_called_with(self.transport._endpoint,
+                                        json=payload,
+                                        ssl=self.transport.ssl)
+        self.transport._consume_payload.assert_not_called()
+
+
+class TestWebSocket(TestCase):
+    def setUp(self):
+        self.session = mock.CoroutineMock()
+        self.session_factory = mock.CoroutineMock(return_value=self.session)
+        self.url = "http://example.com/"
+        self.websocket = _WebSocket(self.session_factory, self.url)
+
+    async def test_enter(self):
+        socket = object()
+        context = mock.MagicMock()
+        context.__aenter__ = mock.CoroutineMock(return_value=socket)
+        self.session.ws_connect.return_value = context
+
+        await self.websocket._enter()
+
+        self.session.ws_connect.assert_called_with(self.url)
+        self.assertEqual(self.websocket._context, context)
+        self.assertEqual(self.websocket._socket, socket)
+
+    async def test_exit(self):
+        socket = object()
+        context = mock.MagicMock()
+        context.__aexit__ = mock.CoroutineMock(return_value=socket)
+        self.websocket._context = context
+        self.websocket._socket = socket
+
+        await self.websocket._exit()
+
+        context.__aexit__.assert_called()
+        self.assertIsNone(self.websocket._context)
+        self.assertIsNone(self.websocket._socket)
+
+    async def test_close(self):
+        self.websocket._exit = mock.CoroutineMock()
+
+        await self.websocket.close()
+
+        self.websocket._exit.assert_called()
+
+    async def test_await(self):
+        socket = mock.MagicMock()
+        self.websocket._socket = socket
+
+        result = await self.websocket
+
+        self.assertEqual(result, socket)
+
+    async def test_get_socket_creates_socket(self):
+        self.websocket._enter = mock.CoroutineMock()
+
+        await self.websocket._get_socket()
+
+        self.websocket._enter.assert_called()
+
+    async def test_get_socket_returns_open_socket(self):
+        self.websocket._enter = mock.CoroutineMock()
+        socket = mock.MagicMock()
+        socket.closed = False
+        self.websocket._socket = socket
+
+        result = await self.websocket._get_socket()
+
+        self.assertEqual(result, socket)
+        self.websocket._enter.assert_not_called()
+
+    async def test_get_socket_creates_new_if_closed(self):
+        self.websocket._exit = mock.CoroutineMock()
+        socket = mock.MagicMock()
+        socket.closed = True
+        self.websocket._socket = socket
+
+        await self.websocket._get_socket()
+
+        self.websocket._exit.assert_called()
+
+
+class TestWebSocketTransport(TestCase):
+    def setUp(self):
+        self.transport = WebSocketTransport(endpoint="example.com/cometd",
+                                            incoming_queue=None,
+                                            loop=None)
+
+    def test_name(self):
+        self.assertEqual(self.transport.name, "websocket")
+
+    async def test_get_socket_for_short_request(self):
+        channel = "/test/channel"
+        self.assertNotIn(channel, self.transport._connect_task_channels)
+        expected_socket = object()
+        self.transport._websocket = asyncio.Future()
+        self.transport._websocket.set_result(expected_socket)
+
+        result = await self.transport._get_socket(channel)
+
+        self.assertIs(result, expected_socket)
+
+    async def test_get_socket_for_long_duration_request(self):
+        channel = "/meta/connect"
+        self.assertIn(channel, self.transport._connect_task_channels)
+        expected_socket = object()
+        self.transport._connect_websocket = asyncio.Future()
+        self.transport._connect_websocket.set_result(expected_socket)
+
+        result = await self.transport._get_socket(channel)
+
+        self.assertIs(result, expected_socket)
+
+    def test_get_lock_for_short_request(self):
+        channel = "/test/channel"
+        self.assertNotIn(channel, self.transport._connect_task_channels)
+        expected_lock = object()
+        self.transport._websocket_lock = expected_lock
+
+        result = self.transport._get_socket_lock(channel)
+
+        self.assertIs(result, expected_lock)
+
+    def test_get_lock_for_long_duration_request(self):
+        channel = "/meta/connect"
+        self.assertIn(channel, self.transport._connect_task_channels)
+        expected_lock = object()
+        self.transport._connect_websocket_lock = expected_lock
+
+        result = self.transport._get_socket_lock(channel)
+
+        self.assertIs(result, expected_lock)
+
+    async def test_close(self):
+        self.transport._websocket = mock.MagicMock()
+        self.transport._websocket.close = mock.CoroutineMock()
+        self.transport._connect_websocket = mock.MagicMock()
+        self.transport._connect_websocket.close = mock.CoroutineMock()
+        self.transport._close_http_session = mock.CoroutineMock()
+
+        await self.transport.close()
+
+        self.transport._websocket.close.assert_called()
+        self.transport._connect_websocket.close.assert_called()
+        self.transport._close_http_session.assert_called()
+
+    async def test_send_socket_payload_short_request(self):
+        matching_response = object()
+        payload = [object()]
+        socket = mock.MagicMock()
+        socket.send_json = mock.CoroutineMock()
+        response_payload = object()
+        response = mock.MagicMock()
+        response.json = mock.MagicMock(return_value=response_payload)
+        socket.receive = mock.CoroutineMock(return_value=response)
+        self.transport._consume_payload = mock.CoroutineMock(
+            return_value=matching_response
+        )
+
+        await self.transport._send_socket_payload(socket, payload)
+
+        socket.send_json.assert_called_with(payload)
+        self.transport._consume_payload.assert_called_with(
+            response_payload,
+            find_response_for=payload[0]
+        )
+
+    async def test_send_socket_payload_long_duration_request(self):
+        matching_response = object()
+        payload = [object()]
+        socket = mock.MagicMock()
+        socket.send_json = mock.CoroutineMock()
+        response_payload = object()
+        response = mock.MagicMock()
+        response.json = mock.MagicMock(return_value=response_payload)
+        socket.receive = mock.CoroutineMock(side_effect=[response, response])
+        self.transport._consume_payload = mock.CoroutineMock(
+            side_effect=[False, matching_response]
+        )
+
+        await self.transport._send_socket_payload(socket, payload)
+
+        socket.send_json.assert_called_with(payload)
+        self.transport._consume_payload.assert_called_with(
+            response_payload,
+            find_response_for=payload[0]
+        )
+
+    async def test_send_final_payload(self):
+        channel = "channel"
+        payload = [dict(channel=channel)]
+        lock = mock.MagicMock()
+        socket = object()
+        response = object()
+        self.transport._get_socket = mock.CoroutineMock(return_value=socket)
+        self.transport._get_socket_lock = mock.MagicMock(return_value=lock)
+        self.transport._send_socket_payload = \
+            mock.CoroutineMock(return_value=response)
+
+        result = await self.transport._send_final_payload(payload)
+
+        self.assertEqual(result, response)
+        self.transport._get_socket.assert_called_with(channel)
+        self.transport._get_socket_lock.assert_called_with(channel)
+        lock.__aenter__.assert_called()
+        lock.__aexit__.assert_called()
+        self.transport._send_socket_payload.assert_called_with(socket,
+                                                               payload)
+
+    async def test_send_final_payload_error(self):
+        channel = "channel"
+        payload = [dict(channel=channel)]
+        lock = mock.MagicMock()
+        socket = object()
+        exception = client_exceptions.ClientError("message")
+        self.transport._get_socket = mock.CoroutineMock(return_value=socket)
+        self.transport._get_socket_lock = mock.MagicMock(return_value=lock)
+        self.transport._send_socket_payload = \
+            mock.CoroutineMock(side_effect=exception)
+
+        with self.assertLogs("aiocometd.transport", level="DEBUG") as log:
+            with self.assertRaisesRegex(TransportError, str(exception)):
+                await self.transport._send_final_payload(payload)
+
+        log_message = "DEBUG:aiocometd.transport:" \
+                      "Failed to send payload, {}".format(exception)
+        self.assertEqual(log.output, [log_message])
+        self.transport._get_socket.assert_called_with(channel)
+        self.transport._get_socket_lock.assert_called_with(channel)
+        lock.__aenter__.assert_called()
+        lock.__aexit__.assert_called()
+        self.transport._send_socket_payload.assert_called_with(socket,
+                                                               payload)
