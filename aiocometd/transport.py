@@ -3,6 +3,7 @@ import asyncio
 import logging
 from enum import Enum, unique, auto
 from abc import ABC, abstractmethod
+import functools
 
 import aiohttp
 
@@ -767,3 +768,67 @@ class LongPollingTransport(_TransportBase):
             raise TransportError(str(error)) from error
         return await self._consume_payload(response_payload,
                                            find_response_for=payload[0])
+
+
+class _WebSocket:
+    """Helper class to create future-like objects which return websocket
+    objects
+
+    This class allows us to use websockets objects without context blocks
+    """
+    def __init__(self, http_session, *args, **kwargs):
+        """
+        :param aiohttp.ClientSession http_session: Client HTTP session
+        :param args: positional arguments for the ws_connect function
+        :param kwargs: keyword arguments for the ws_connect function
+        """
+        self._constructor = functools.partial(http_session.ws_connect,
+                                              *args, **kwargs)
+        self._context = None
+        self._socket = None
+
+    def __await__(self):
+        """Create or return an existing websocket object
+
+        :return: Websocket object
+        :rtype: `aiohttp.ClientWebSocketResponse \
+        <https://aiohttp.readthedocs.io/en/stable\
+        /client_reference.html#aiohttp.ClientWebSocketResponse>`_
+        """
+        gen = self._get_socket().__await__()
+        return gen
+
+    async def close(self):
+        """Close the websocket"""
+        await self._exit()
+
+    async def _get_socket(self):
+        """Create or return an existing websocket object
+
+        :return: Websocket object
+        :rtype: `aiohttp.ClientWebSocketResponse \
+        <https://aiohttp.readthedocs.io/en/stable\
+        /client_reference.html#aiohttp.ClientWebSocketResponse>`_
+        """
+        # if a the websocket object already exists and if it's in closed state
+        # exit the context manager properly and clear the references
+        if self._socket is not None and self._socket.closed:
+            await self._exit()
+
+        # if there is no websocket object, then create it and enter the \
+        # context manager properly to initialize it
+        if self._socket is None:
+            await self._enter()
+
+        return self._socket
+
+    async def _enter(self):
+        """Enter websocket context"""
+        self._context = self._constructor()
+        self._socket = await self._context.__aenter__()
+
+    async def _exit(self):
+        """Exit websocket context"""
+        if self._context:
+            await self._context.__aexit__(None, None, None)
+            self._socket = self._context = None

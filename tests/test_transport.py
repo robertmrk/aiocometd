@@ -4,7 +4,7 @@ from asynctest import TestCase, mock
 from aiohttp import ClientSession, client_exceptions
 
 from aiocometd.transport import LongPollingTransport, TransportState, \
-    _TransportBase
+    _TransportBase, _WebSocket
 from aiocometd.exceptions import TransportError, TransportInvalidOperation
 
 
@@ -1230,3 +1230,78 @@ class TestLongPollingTransport(TestCase):
                                         json=payload,
                                         ssl=self.transport.ssl)
         self.transport._consume_payload.assert_not_called()
+
+
+class TestWebSocket(TestCase):
+    def setUp(self):
+        self.session = mock.CoroutineMock()
+        self.url = "http://example.com/"
+        self.websocket = _WebSocket(self.session, self.url)
+
+    async def test_enter(self):
+        socket = object()
+        context = mock.MagicMock()
+        context.__aenter__ = mock.CoroutineMock(return_value=socket)
+        self.session.ws_connect.return_value = context
+
+        await self.websocket._enter()
+
+        self.session.ws_connect.assert_called_with(self.url)
+        self.assertEqual(self.websocket._context, context)
+        self.assertEqual(self.websocket._socket, socket)
+
+    async def test_exit(self):
+        socket = object()
+        context = mock.MagicMock()
+        context.__aexit__ = mock.CoroutineMock(return_value=socket)
+        self.websocket._context = context
+        self.websocket._socket = socket
+
+        await self.websocket._exit()
+
+        context.__aexit__.assert_called()
+        self.assertIsNone(self.websocket._context)
+        self.assertIsNone(self.websocket._socket)
+
+    async def test_close(self):
+        self.websocket._exit = mock.CoroutineMock()
+
+        await self.websocket.close()
+
+        self.websocket._exit.assert_called()
+
+    async def test_await(self):
+        socket = mock.MagicMock()
+        self.websocket._socket = socket
+
+        result = await self.websocket
+
+        self.assertEqual(result, socket)
+
+    async def test_get_socket_creates_socket(self):
+        self.websocket._enter = mock.CoroutineMock()
+
+        await self.websocket._get_socket()
+
+        self.websocket._enter.assert_called()
+
+    async def test_get_socket_returns_open_socket(self):
+        self.websocket._enter = mock.CoroutineMock()
+        socket = mock.MagicMock()
+        socket.closed = False
+        self.websocket._socket = socket
+
+        result = await self.websocket._get_socket()
+
+        self.assertEqual(result, socket)
+        self.websocket._enter.assert_not_called()
+
+    async def test_get_socket_creates_new_if_closed(self):
+        self.websocket._exit = mock.CoroutineMock()
+        socket = mock.MagicMock()
+        socket.closed = True
+        self.websocket._socket = socket
+
+        await self.websocket._get_socket()
+
+        self.websocket._exit.assert_called()
