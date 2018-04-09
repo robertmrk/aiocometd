@@ -144,8 +144,8 @@ class _TransportBase(Transport):
 
     This class contains most of the transport operations implemented, it can
     be used as a base class for various concrete transport implementations.
-    When subclassing, at a minimum the :meth:`_send_payload` method should be
-    reimplemented.
+    When subclassing, at a minimum the :meth:`_send_final_payload` and
+    :obj:`name` methods should be reimplemented.
     """
     #: Handshake message template
     _HANDSHAKE_MESSAGE = {
@@ -201,11 +201,12 @@ class _TransportBase(Transport):
         # optional
         "id": None
     }
+    #: Timeout to give to HTTP session to close itself
+    _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
-    def __init__(self, *, name, endpoint, incoming_queue,
+    def __init__(self, *, endpoint, incoming_queue,
                  reconnection_timeout=1, ssl=None, loop=None):
         """
-        :param str name: The tranport type's identifier
         :param str endpoint: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
                                              messages
@@ -224,8 +225,6 @@ class _TransportBase(Transport):
                      :func:`asyncio.get_event_loop` is used to get the default
                      event loop.
         """
-        #: the tranport type's identifier
-        self._name = name
         #: queue for consuming incoming event messages
         self.incoming_queue = incoming_queue
         #: CometD service url
@@ -238,7 +237,7 @@ class _TransportBase(Transport):
         #: session
         self._message_id = 0
         #: reconnection advice parameters returned by the server
-        self._reconnect_advice = None
+        self._reconnect_advice = {}
         #: set of subscribed channels
         self._subscriptions = set()
         #: boolean to mark whether to resubscribe on connect
@@ -255,11 +254,37 @@ class _TransportBase(Transport):
         self._connecting_event = asyncio.Event()
         #: SSL validation mode
         self.ssl = ssl
+        #: semaphore to limit the number of concurrent HTTP connections to 2
+        self._http_semaphore = asyncio.Semaphore(2, loop=self._loop)
+        #: http session
+        self._http_session = None
+
+    async def _get_http_session(self):
+        """Factory method for getting the current HTTP session
+
+        :return: The current session if it's not None, otherwise it creates a
+                 new session.
+        """
+        # it would be nicer to create the session when the class gets
+        # initialized, but this seems to be the right way to do it since
+        # aiohttp produces log messages with warnings that a session should be
+        # created in a coroutine
+        if self._http_session is None:
+            self._http_session = aiohttp.ClientSession()
+        return self._http_session
+
+    async def _close_http_session(self):
+        """Close the http session if it's not already closed"""
+        # graceful shutdown recommended by the documentation
+        # https://aiohttp.readthedocs.io/en/stable/client_advanced.html#graceful-shutdown
+        if self._http_session is not None and not self._http_session.closed:
+            await self._http_session.close()
+            await asyncio.sleep(self._HTTP_SESSION_CLOSE_TIMEOUT)
 
     @property
     def name(self):
         """The transport type's identifier"""
-        return self._name
+        return "transport-base"
 
     @property
     def endpoint(self):
@@ -330,8 +355,8 @@ class _TransportBase(Transport):
         return response_message
 
     def _finalize_message(self, message):
-        """Update the ``id`` and ``clientId`` message fields as a side effect
-        if they're are present in the *message*.
+        """Update the ``id``, ``clientId`` and ``connectionType`` message
+        fields as a side effect if they're are present in the *message*.
 
         :param dict message: Outgoing message
         """
@@ -346,9 +371,10 @@ class _TransportBase(Transport):
             message["connectionType"] = self.name
 
     def _finalize_payload(self, payload):
-        """Update the ``id`` and ``clientId`` message fields in the *payload*,
-        as a side effect if they're are present in the *message*. The *payload*
-        can be either a single message or a list of messages.
+        """Update the ``id``, ``clientId`` and ``connectionType`` message
+        fields in the *payload*, as a side effect if they're are present in
+        the *message*. The *payload* can be either a single message or a list
+        of messages.
 
         :param payload: A message or a list of messages
         :type payload: dict or list[dict]
@@ -359,22 +385,10 @@ class _TransportBase(Transport):
         else:
             self._finalize_message(payload)
 
-    async def _send_message(self, message, additional_messages=None,
-                            consume_server_errors=False, **kwargs):
+    async def _send_message(self, message, **kwargs):
         """Send message to server
 
-        :param dict message: A finalized or a template message
-        :param additional_messages: An optional list of additional messages \
-        to send along with the main *message* in the same payload. \
-        Note that the options in *kwargs* will not be applied to these \
-        messages, they should be prepared in advance.
-        :type additional_messages: list[dict] or None
-        :param bool consume_server_errors: Consume server side error \
-        messages which could not or should not be handled by the transport. \
-        Let the consumers decide how to deal with them. (these errors are \
-        failed confirmation messages for all channels except \
-        ``/meta/connect``, ``/meta/disconnect`` and ``/meta/handshake``). \
-        If it's True, then these messages will be enqueued for consumers.
+        :param dict message: A message
         :param kwargs: Optional key-value pairs that'll be used to update the \
         the values in the *message*
         :return: Response message
@@ -382,48 +396,43 @@ class _TransportBase(Transport):
         :raises TransportError: When the network request fails.
         """
         message.update(kwargs)
-        if additional_messages:
-            payload = [message] + additional_messages
-        else:
-            payload = message
-        self._finalize_payload(payload)
+        return await self._send_payload([message])
 
-        return await self._send_payload(
-            payload,
-            confirm_for=message,
-            consume_server_errors=consume_server_errors)
+    async def _send_payload(self, payload):
+        """Finalize and send *payload* to server
+
+        Finalize and send the *payload* to the server and return once a
+        response message can be provided for the first message in the
+        *payload*.
+
+        :param list[dict] payload: A list of messages
+        :return: The response message for the first message in the *payload*
+        :rtype: dict
+        :raises TransportError: When the network request fails.
+        """
+        self._finalize_payload(payload)
+        return await self._send_final_payload(payload)
 
     @abstractmethod
-    async def _send_payload(self, payload, confirm_for,
-                            consume_server_errors=False):
+    async def _send_final_payload(self, payload):
         """Send *payload* to server
 
-        Send the *payload* to the server and return once a confirmation
-        response message can be provided for the message specified in
-        *confirm_for*.
+        Send the *payload* to the server and return once a
+        response message can be provided for the first message in the
+        *payload*.
         When reimplementing this method keep in mind that the server will
         likely return additional responses which should be enqueued for
         consumers. To enqueue the received messages :meth:`_consume_payload`
         can be used.
 
-        :param payload: A message or a list of messages
-        :type payload: dict or list[dict]
-        :param dict confirm_for: Return the confirmation response message for \
-        the given *confirm_for* message.
-        :param bool consume_server_errors: Consume server side error \
-        messages which could not or should not be handled by the transport. \
-        Let the consumers decide how to deal with them. (these errors are \
-        failed confirmation messages for all channels except \
-        ``/meta/connect``, ``/meta/disconnect`` and ``/meta/handshake``). \
-        If it's True, then these messages will be enqueued for consumers.
-        :return: The confirmation response message for the *confirm_for*
-                 message
+        :param list[dict] payload: A list of messages
+        :return: The response message for the first message in the *payload*
         :rtype: dict
         :raises TransportError: When the network request fails.
         """
 
-    def _is_confirmation(self, response_message, message):
-        """Check whether the *response_message* is a confirmation for the
+    def _is_matching_response(self, response_message, message):
+        """Check whether the *response_message* is a response for the
         given *message*.
 
         :param dict message: A sent message
@@ -442,29 +451,77 @@ class _TransportBase(Transport):
                 message.get("id") == response_message.get("id") and
                 "successful" in response_message)
 
-    def _on_response_consumed(self, response_message):
-        """Override to customize message consumption"""
+    def _is_server_error_message(self, response_message):
+        """Check whether the *response_message* is a server side error message
 
-    async def _consume_payload(self, payload, *, confirm_for=None,
-                               consume_server_errors=False):
+        :param response_message: A response message
+        :return: True if the *response_message* is a server side error message
+                 otherwise False.
+        :rtype: bool
+        """
+        return (response_message["channel"] != "/meta/connect" and
+                response_message["channel"] != "/meta/disconnect" and
+                response_message["channel"] != "/meta/handshake" and
+                not response_message.get("successful", True))
+
+    def _is_event_message(self, response_message):
+        """Check whether the *response_message* is an event message
+
+        :param response_message: A response message
+        :return: True if the *response_message* is an event message
+                 otherwise False.
+        :rtype: bool
+        """
+        return (not response_message["channel"].startswith("/meta/") and
+                not response_message["channel"].startswith("/service/") and
+                "data" in response_message)
+
+    def _consume_message(self, response_message):
+        """Enqueue the *response_message* for consumers if it's a type of
+        message that consumers should receive
+
+        :param response_message: A response message
+        """
+        if (self._is_server_error_message(response_message) or
+                self._is_event_message(response_message)):
+            self._enqueue_message(response_message)
+
+    def _update_subscriptions(self, response_message):
+        """Update the set of subscriptions based on the *response_message*
+
+       :param response_message: A response message
+        """
+        # if a subscription response is successful, then add the channel
+        # to the set of subscriptions, if it fails, then remove it
+        if response_message["channel"] == "/meta/subscribe":
+            if (response_message["successful"] and
+                    response_message["subscription"]
+                    not in self._subscriptions):
+                self._subscriptions.add(response_message["subscription"])
+            elif (not response_message["successful"] and
+                  response_message["subscription"] in self._subscriptions):
+                self._subscriptions.remove(response_message["subscription"])
+
+        # if an unsubscribe response is successful then remove the channel
+        # from the set of subscriptions
+        if response_message["channel"] == "/meta/unsubscribe":
+            if (response_message["successful"] and
+                    response_message["subscription"] in self._subscriptions):
+                self._subscriptions.remove(response_message["subscription"])
+
+    async def _consume_payload(self, payload, *, find_response_for=None):
         """Enqueue event messages for the consumers and update the internal
         state of the transport, based on response messages in the *payload*.
 
         :param payload: A list of response messages
         :type payload: list[dict]
-        :param dict confirm_for: Return the confirmation response message for \
-        the given *confirm_for* message.
-        :param bool consume_server_errors: Consume server side error \
-        messages which could not or should not be handled by the transport. \
-        Let the consumers decide how to deal with them. (these errors are \
-        failed confirmation messages for all channels except \
-        ``/meta/connect``, ``/meta/disconnect`` and ``/meta/handshake``). \
-        If it's True, then these messages will be enqueued for consumers.
-        :return: The confirmation response message for the *confirm_for*
-                 message, otherwise ``None``
+        :param dict find_response_for: Find and return the matching \
+        response message for the given *find_response_for* message.
+        :return: The response message for the *find_response_for* message, \
+        otherwise ``None``
         :rtype: dict or None
         """
-        # return None if no confirmation message is fourn in the payload
+        # return None if no response message is found for *find_response_for*
         result = None
         for message in payload:
             # if there is an advice in the message then update the transport's
@@ -472,48 +529,17 @@ class _TransportBase(Transport):
             if "advice" in message:
                 self._reconnect_advice = message["advice"]
 
-            # if a subscription response is successful, then add the channel
-            # to the set of subscriptions, if it fails, then remove it
-            if message["channel"] == "/meta/subscribe":
-                if (message["successful"] and
-                        message["subscription"] not in self._subscriptions):
-                    self._subscriptions.add(message["subscription"])
-                elif (not message["successful"] and
-                      message["subscription"] in self._subscriptions):
-                    self._subscriptions.remove(message["subscription"])
+            # update subscriptions based on responses
+            self._update_subscriptions(message)
 
-            # if an unsubscribe response is successful then remove the channel
-            # from the set of subscriptions
-            if message["channel"] == "/meta/unsubscribe":
-                if (message["successful"] and
-                        message["subscription"] in self._subscriptions):
-                    self._subscriptions.remove(message["subscription"])
-
-            # if enabled, consume server side error messages and enqueue them
-            # as ServerErrors
-            if (consume_server_errors and
-                    message["channel"] != "/meta/connect" and
-                    message["channel"] != "/meta/disconnect" and
-                    message["channel"] != "/meta/handshake" and
-                    not message.get("successful", True)):
-                await self.incoming_queue.put(message)
-
-            # call _on_response_consumed which can be overriden to customize
-            # message consumption
-            self._on_response_consumed(message)
-
-            # check if the message is the confirmation response we're looking
-            # for, if yes then set it as the result and continue
-            if result is None and self._is_confirmation(message, confirm_for):
+            # set the message as the result and continue if it is a matching
+            # response
+            if (result is None and
+                    self._is_matching_response(message, find_response_for)):
                 result = message
                 continue
 
-            # if the message's channel doesn't starts with meta or service, it
-            # must be an event message which should be enqueud for the consumer
-            if (not message["channel"].startswith("/meta/") and
-                    not message["channel"].startswith("/service/") and
-                    "data" in message):
-                self._enqueue_message(message)
+            self._consume_message(message)
         return result
 
     def _enqueue_message(self, message):
@@ -586,17 +612,13 @@ class _TransportBase(Transport):
         if delay:
             await asyncio.sleep(delay, loop=self._loop)
         message = self._CONNECT_MESSAGE.copy()
-        extra_messages = None
+        payload = [message]
         if self._subscribe_on_connect and self.subscriptions:
-            extra_messages = []
             for subscription in self.subscriptions:
                 extra_message = self._SUBSCRIBE_MESSAGE.copy()
                 extra_message["subscription"] = subscription
-                extra_messages.append(extra_message)
-        result = await self._send_message(
-            message,
-            additional_messages=extra_messages,
-            consume_server_errors=True)
+                payload.append(extra_message)
+        result = await self._send_payload(payload)
         self._subscribe_on_connect = not result["successful"]
         return result
 
@@ -653,9 +675,6 @@ class _TransportBase(Transport):
                          "will be scheduled.")
             self._state = TransportState.DISCONNECTED
 
-    async def _before_disconnect(self):
-        """Called before disconnect message is sent"""
-
     async def disconnect(self):
         """Disconnect from server
 
@@ -670,6 +689,7 @@ class _TransportBase(Transport):
 
     async def close(self):
         """Close transport and release resources"""
+        await self._close_http_session()
 
     async def subscribe(self, channel):
         """Subscribe to *channel*
@@ -730,64 +750,12 @@ class _TransportBase(Transport):
 
 class LongPollingTransport(_TransportBase):
     """Long-polling type transport"""
-    #: Timeout to give to HTTP session to close itself
-    _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
-    def __init__(self, *, endpoint, incoming_queue, reconnection_timeout=1,
-                 ssl=None, loop=None):
-        """
-        :param str endpoint: CometD service url
-        :param asyncio.Queue incoming_queue: Queue for consuming incoming event
-                                             messages
-        :param reconnection_timeout: The time to wait before trying to \
-        reconnect to the server after a network failure
-        :type reconnection_timeout: None or int or float
-        :param ssl: SSL validation mode. None for default SSL check \
-        (:func:`ssl.create_default_context` is used), False for skip SSL \
-        certificate validation, \
-        `aiohttp.Fingerprint <https://aiohttp.readthedocs.io/en/stable/\
-        client_reference.html#aiohttp.Fingerprint>`_ for fingerprint \
-        validation, :obj:`ssl.SSLContext` for custom SSL certificate \
-        validation.
-        :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
-                     schedule tasks. If *loop* is ``None`` then
-                     :func:`asyncio.get_event_loop` is used to get the default
-                     event loop.
-        """
-        super().__init__(name="long-polling", endpoint=endpoint,
-                         incoming_queue=incoming_queue,
-                         reconnection_timeout=reconnection_timeout, ssl=ssl,
-                         loop=loop)
+    @property
+    def name(self):
+        return "long-polling"
 
-        #: semaphore to limit the number of concurrent HTTP connections to 2
-        self._http_semaphore = asyncio.Semaphore(2, loop=self._loop)
-        #: http session
-        self._http_session = None
-
-    async def _get_http_session(self):
-        """Factory method for getting the current HTTP session
-
-        :return: The current session if it's not None, otherwise it creates a
-                 new session.
-        """
-        # it would be nicer to create the session when the class gets
-        # initialized, but this seems to be the right way to do it since
-        # aiohttp produces log messages with warnings that a session should be
-        # created in a coroutine
-        if self._http_session is None:
-            self._http_session = aiohttp.ClientSession()
-        return self._http_session
-
-    async def _close_http_session(self):
-        """Close the http session if it's not already closed"""
-        # graceful shutdown recommended by the documentation
-        # https://aiohttp.readthedocs.io/en/stable/client_advanced.html#graceful-shutdown
-        if self._http_session is not None and not self._http_session.closed:
-            await self._http_session.close()
-            await asyncio.sleep(self._HTTP_SESSION_CLOSE_TIMEOUT)
-
-    async def _send_payload(self, payload, confirm_for,
-                            consume_server_errors=False):
+    async def _send_final_payload(self, payload):
         try:
             session = await self._get_http_session()
             async with self._http_semaphore:
@@ -797,10 +765,5 @@ class LongPollingTransport(_TransportBase):
         except aiohttp.client_exceptions.ClientError as error:
             logger.debug("Failed to send payload, {}".format(error))
             raise TransportError(str(error)) from error
-        return await self._consume_payload(
-            response_payload,
-            confirm_for=confirm_for,
-            consume_server_errors=consume_server_errors)
-
-    async def close(self):
-        await self._close_http_session()
+        return await self._consume_payload(response_payload,
+                                           find_response_for=payload[0])
