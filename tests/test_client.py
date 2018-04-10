@@ -1,24 +1,26 @@
 import asyncio
 import reprlib
+from enum import Enum, unique
 
 from asynctest import TestCase, mock
 
 from aiocometd.client import Client
 from aiocometd.exceptions import ServerError, ClientInvalidOperation, \
     TransportError, TransportTimeoutError, ClientError
-from aiocometd.transport import DEFAULT_TRANSPORT_NAME
+from aiocometd.transport import DEFAULT_CONNECTION_TYPE, ConnectionType
+
+
+@unique
+class MockConnectionType(Enum):
+    TYPE1 = "type1"
+    TYPE2 = "type2"
+    TYPE3 = "type3"
+    TYPE4 = "type4"
 
 
 class TestClient(TestCase):
     def setUp(self):
         self.client = Client("")
-
-    def test_init_with_loop(self):
-        loop = object()
-
-        client = Client(endpoint=None, loop=loop)
-
-        self.assertIs(client._loop, loop)
 
     async def long_task(self, result, timeout=None):
         if timeout:
@@ -27,6 +29,13 @@ class TestClient(TestCase):
             return result
         else:
             raise result
+
+    def test_init_with_loop(self):
+        loop = object()
+
+        client = Client(endpoint=None, loop=loop)
+
+        self.assertIs(client._loop, loop)
 
     @mock.patch("aiocometd.client.asyncio")
     def test_init_without_loop(self, asyncio_mock):
@@ -38,22 +47,46 @@ class TestClient(TestCase):
         self.assertIs(client._loop, loop)
 
     def test_init_with_no_connection_types(self):
-        client = Client(endpoint=None)
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            client = Client(endpoint=None)
 
-        self.assertEqual(client._connection_types, ["websocket",
-                                                    "long-polling"])
+        self.assertEqual(client._connection_types,
+                         [ConnectionType.WEBSOCKET,
+                          ConnectionType.LONG_POLLING])
+        connection_type_strings = [ct.value for ct in
+                                   client._connection_types]
+        log_fmt_spec = "DEBUG:aiocometd.client:" \
+                       "Created client with connection_types: {!r}"
+        self.assertEqual(log.output,
+                         [log_fmt_spec.format(connection_type_strings)])
 
-    def test_init_with_no_connection_types_list(self):
-        list = ["type1", "type2"]
-        client = Client(endpoint=None, connection_types=list)
+    def test_init_with_connection_types_list(self):
+        list = [ConnectionType.LONG_POLLING, ConnectionType.WEBSOCKET]
+
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            client = Client(endpoint=None, connection_types=list)
 
         self.assertEqual(client._connection_types, list)
+        connection_type_strings = [ct.value for ct in
+                                   client._connection_types]
+        log_fmt_spec = "DEBUG:aiocometd.client:" \
+                       "Created client with connection_types: {!r}"
+        self.assertEqual(log.output,
+                         [log_fmt_spec.format(connection_type_strings)])
 
-    def test_init_with_no_connection_types_string(self):
-        type = "type1"
-        client = Client(endpoint=None, connection_types=type)
+    def test_init_with_connection_type_value(self):
+        type = ConnectionType.LONG_POLLING
+
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            client = Client(endpoint=None, connection_types=type)
 
         self.assertEqual(client._connection_types, [type])
+        connection_type_strings = [ct.value for ct in
+                                   client._connection_types]
+        log_fmt_spec = "DEBUG:aiocometd.client:" \
+                       "Created client with connection_types: {!r}"
+        self.assertEqual(log.output,
+                         [log_fmt_spec.format(connection_type_strings)])
 
     def test_subscriptions(self):
         self.client._transport = mock.MagicMock()
@@ -70,6 +103,17 @@ class TestClient(TestCase):
 
         self.assertEqual(result, set())
 
+    def test_connection_type(self):
+        self.client._transport = mock.MagicMock()
+        self.client._transport.connection_type = object()
+
+        result = self.client.connection_type
+
+        self.assertIs(result, self.client._transport.connection_type)
+
+    def test_connection_type_none_on_no_transport(self):
+        self.assertIsNone(self.client.connection_type)
+
     def test_closed(self):
         self.assertIs(self.client.closed, self.client._closed)
 
@@ -77,17 +121,33 @@ class TestClient(TestCase):
         with self.assertRaises(AttributeError):
             self.client.closed = False
 
+    @mock.patch("aiocometd.client.ConnectionType", new=MockConnectionType)
     def test_pick_connection_type(self):
-        self.client._connection_types = ["type1", "type2", "type3"]
-        supported_types = ["type2", "type3", "type4"]
+        self.client._connection_types = [
+            MockConnectionType.TYPE1,
+            MockConnectionType.TYPE2,
+            MockConnectionType.TYPE3
+        ]
+        supported_types = [
+            MockConnectionType.TYPE2.value,
+            MockConnectionType.TYPE3.value,
+            MockConnectionType.TYPE4.value
+        ]
 
         result = self.client._pick_connection_type(supported_types)
 
-        self.assertEqual(result, "type2")
+        self.assertEqual(result, MockConnectionType.TYPE2)
 
+    @mock.patch("aiocometd.client.ConnectionType", new=MockConnectionType)
     def test_pick_connection_type_without_overlap(self):
-        self.client._connection_types = ["type1", "type2"]
-        supported_types = ["type3", "type4"]
+        self.client._connection_types = [
+            MockConnectionType.TYPE1,
+            MockConnectionType.TYPE2
+        ]
+        supported_types = [
+            MockConnectionType.TYPE3.value,
+            MockConnectionType.TYPE4.value
+        ]
 
         result = self.client._pick_connection_type(supported_types)
 
@@ -96,22 +156,23 @@ class TestClient(TestCase):
     @mock.patch("aiocometd.client.create_transport")
     async def test_negotiate_transport_default(self, create_transport):
         response = {
-            "supportedConnectionTypes": [DEFAULT_TRANSPORT_NAME],
+            "supportedConnectionTypes": [DEFAULT_CONNECTION_TYPE.value],
             "successful": True
         }
         transport = mock.MagicMock()
-        transport.name = DEFAULT_TRANSPORT_NAME
+        transport.connection_type = DEFAULT_CONNECTION_TYPE
         transport.handshake = mock.CoroutineMock(return_value=response)
         create_transport.return_value = transport
         self.client._pick_connection_type = \
-            mock.MagicMock(return_value=DEFAULT_TRANSPORT_NAME)
+            mock.MagicMock(return_value=DEFAULT_CONNECTION_TYPE)
         self.client._verify_response = mock.MagicMock()
 
-        result = await self.client._negotiate_transport()
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            result = await self.client._negotiate_transport()
 
         self.assertEqual(result, transport)
         create_transport.assert_called_with(
-            DEFAULT_TRANSPORT_NAME,
+            DEFAULT_CONNECTION_TYPE,
             endpoint=self.client.endpoint,
             incoming_queue=self.client._incoming_queue,
             ssl=self.client.ssl)
@@ -119,15 +180,23 @@ class TestClient(TestCase):
         self.client._verify_response.assert_called_with(response)
         self.client._pick_connection_type.assert_called_with(
             response["supportedConnectionTypes"])
+        log_prefix = "DEBUG:aiocometd.client:"
+        log_message1 = (log_prefix +
+                        "Connection types supported by the server: {!r}"
+                        .format(response["supportedConnectionTypes"]))
+        log_message2 = (log_prefix +
+                        "Picked connection type: {!r}"
+                        .format(DEFAULT_CONNECTION_TYPE.value))
+        self.assertEqual(log.output, [log_message1, log_message2])
 
     @mock.patch("aiocometd.client.create_transport")
     async def test_negotiate_transport_error(self, create_transport):
         response = {
-            "supportedConnectionTypes": [DEFAULT_TRANSPORT_NAME],
+            "supportedConnectionTypes": [DEFAULT_CONNECTION_TYPE.value],
             "successful": True
         }
         transport = mock.MagicMock()
-        transport.name = DEFAULT_TRANSPORT_NAME
+        transport.connection_type = DEFAULT_CONNECTION_TYPE
         transport.handshake = mock.CoroutineMock(return_value=response)
         transport.close = mock.CoroutineMock()
         create_transport.return_value = transport
@@ -137,10 +206,11 @@ class TestClient(TestCase):
         with self.assertRaises(ClientError,
                                msg="None of the connection types offered "
                                    "by the server are supported."):
-            await self.client._negotiate_transport()
+            with self.assertLogs("aiocometd.client", "DEBUG") as log:
+                await self.client._negotiate_transport()
 
         create_transport.assert_called_with(
-            DEFAULT_TRANSPORT_NAME,
+            DEFAULT_CONNECTION_TYPE,
             endpoint=self.client.endpoint,
             incoming_queue=self.client._incoming_queue,
             ssl=self.client.ssl)
@@ -148,41 +218,47 @@ class TestClient(TestCase):
         self.client._pick_connection_type.assert_called_with(
             response["supportedConnectionTypes"])
         transport.close.assert_called()
+        log_prefix = "DEBUG:aiocometd.client:"
+        log_message1 = (log_prefix +
+                        "Connection types supported by the server: {!r}"
+                        .format(response["supportedConnectionTypes"]))
+        self.assertEqual(log.output, [log_message1])
 
     @mock.patch("aiocometd.client.create_transport")
     async def test_negotiate_transport_non_default(self, create_transport):
-        non_default_name = "fake-transport"
-        self.client._connection_types = [non_default_name]
+        non_default_type = ConnectionType.WEBSOCKET
+        self.client._connection_types = [non_default_type]
         response = {
-            "supportedConnectionTypes": [DEFAULT_TRANSPORT_NAME,
-                                         non_default_name],
+            "supportedConnectionTypes": [DEFAULT_CONNECTION_TYPE.value,
+                                         non_default_type.value],
             "successful": True
         }
         transport1 = mock.MagicMock()
-        transport1.name = DEFAULT_TRANSPORT_NAME
+        transport1.connection_type = DEFAULT_CONNECTION_TYPE
         transport1.client_id = "client_id"
         transport1.handshake = mock.CoroutineMock(return_value=response)
         transport1.close = mock.CoroutineMock()
         transport2 = mock.MagicMock()
-        transport2.name = non_default_name
+        transport2.connection_type = non_default_type
         transport2.client_id = None
         create_transport.side_effect = [transport1, transport2]
         self.client._pick_connection_type = \
-            mock.MagicMock(return_value=non_default_name)
+            mock.MagicMock(return_value=non_default_type)
         self.client._verify_response = mock.MagicMock()
 
-        result = await self.client._negotiate_transport()
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            result = await self.client._negotiate_transport()
 
         self.assertEqual(result, transport2)
         create_transport.assert_has_calls(
             [
                 mock.call(
-                    DEFAULT_TRANSPORT_NAME,
+                    DEFAULT_CONNECTION_TYPE,
                     endpoint=self.client.endpoint,
                     incoming_queue=self.client._incoming_queue,
                     ssl=self.client.ssl),
                 mock.call(
-                    non_default_name,
+                    non_default_type,
                     endpoint=self.client.endpoint,
                     incoming_queue=self.client._incoming_queue,
                     client_id=transport1.client_id,
@@ -194,6 +270,14 @@ class TestClient(TestCase):
         self.client._pick_connection_type.assert_called_with(
             response["supportedConnectionTypes"])
         transport1.close.assert_called()
+        log_prefix = "DEBUG:aiocometd.client:"
+        log_message1 = (log_prefix +
+                        "Connection types supported by the server: {!r}"
+                        .format(response["supportedConnectionTypes"]))
+        log_message2 = (log_prefix +
+                        "Picked connection type: {!r}"
+                        .format(non_default_type.value))
+        self.assertEqual(log.output, [log_message1, log_message2])
 
     async def test_open(self):
         transport = mock.MagicMock()

@@ -11,42 +11,46 @@ from .exceptions import TransportError, TransportInvalidOperation
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TRANSPORT_NAME = "long-polling"
+
+@unique
+class ConnectionType(Enum):
+    """Connection types"""
+    #: Long polling connection type
+    LONG_POLLING = "long-polling"
+    #: Websocket connection type
+    WEBSOCKET = "websocket"
+
+
+DEFAULT_CONNECTION_TYPE = ConnectionType.LONG_POLLING
 transport_classes = {}
 
 
-def transport(transport_name):
+def register_transport(type):
     """Class decorator for registering transport classes
 
-    The class' name property will be also defined to return the given
-    *transport_name*
-    :param str transport_name: The transport type's identifier
+    The class' connection_type property will be also defined to return the
+    given *connection_type*
+    :param ConnectionType type: A connection type
     :return: The updated class
     """
-    global transport_classes
-
     def decorator(cls):
-        transport_classes[transport_name] = cls
+        global transport_classes
+        transport_classes[type] = cls
 
         @property
-        def name(instance):
-            return transport_name
+        def connection_type(instance):
+            return type
 
-        cls.name = name
+        cls.connection_type = connection_type
         return cls
     return decorator
 
 
-def transport_types():
-    """Set of available transport type names"""
-    global transport_classes
-    return transport_classes.keys()
+def create_transport(connection_type, *args, **kwargs):
+    """Create a transport object that can be used for the given
+    *connection_type*
 
-
-def create_transport(name, *args, **kwargs):
-    """Create a transport object identified by the given *name*
-
-    :param str name: The transport type's identifier
+    :param ConnectionType connection_type: A connection type
     :param args: Positional arguments to pass to the transport
     :param kwargs: Keyword arguments to pass to the transport
     :return: A transport object
@@ -54,11 +58,11 @@ def create_transport(name, *args, **kwargs):
     """
     global transport_classes
 
-    if name not in transport_classes:
-        raise TransportInvalidOperation("There is no transport with a "
-                                        "name {!r}".format(name))
+    if connection_type not in transport_classes:
+        raise TransportInvalidOperation("There is no transport for connection "
+                                        "type {!r}".format(connection_type))
 
-    return transport_classes[name](*args, **kwargs)
+    return transport_classes[connection_type](*args, **kwargs)
 
 
 @unique
@@ -78,8 +82,8 @@ class Transport(ABC):
     """Defines the operations that all transport classes should support"""
     @property
     @abstractmethod
-    def name(self):
-        """The transport type's identifier"""
+    def connection_type(self):
+        """The transport's connection type"""
 
     @property
     @abstractmethod
@@ -105,7 +109,7 @@ class Transport(ABC):
     async def handshake(self, connection_types):
         """Executes the handshake operation
 
-        :param list[str] connection_types: list of connection types
+        :param list[ConnectionType] connection_types: list of connection types
         :return: Handshake response
         :rtype: dict
         :raises TransportError: When the network request fails.
@@ -194,7 +198,7 @@ class _TransportBase(Transport):
     This class contains most of the transport operations implemented, it can
     be used as a base class for various concrete transport implementations.
     When subclassing, at a minimum the :meth:`_send_final_payload` and
-    :obj:`name` methods should be reimplemented.
+    :obj:`~Transport.connection_type` methods should be reimplemented.
     """
     #: Handshake message template
     _HANDSHAKE_MESSAGE = {
@@ -332,9 +336,9 @@ class _TransportBase(Transport):
             await asyncio.sleep(self._HTTP_SESSION_CLOSE_TIMEOUT)
 
     @property
-    def name(self):
-        """The transport type's identifier"""
-        return "transport-base"
+    def connection_type(self):
+        """The transport's connection type"""
+        return None  # pragma: no cover
 
     @property
     def endpoint(self):
@@ -365,7 +369,7 @@ class _TransportBase(Transport):
     async def handshake(self, connection_types):
         """Executes the handshake operation
 
-        :param list[str] connection_types: list of connection types
+        :param list[ConnectionType] connection_types: list of connection types
         :return: Handshake response
         :rtype: dict
         :raises TransportError: When the network request fails.
@@ -375,7 +379,7 @@ class _TransportBase(Transport):
     async def _handshake(self, connection_types, delay=None):
         """Executes the handshake operation
 
-        :param list[str] connection_types: list of connection types
+        :param list[ConnectionType] connection_types: list of connection types
         :param delay: Initial connection delay
         :type delay: None or int or float
         :return: Handshake response
@@ -390,13 +394,15 @@ class _TransportBase(Transport):
         connection_types = list(connection_types)
         # make sure that the supported connection types list contains this
         # transport
-        if self.name not in connection_types:
-            connection_types.append(self.name)
+        if self.connection_type not in connection_types:
+            connection_types.append(self.connection_type)
+        connection_type_values = [ct.value for ct in connection_types]
 
         # send message and await its response
-        response_message = \
-            await self._send_message(self._HANDSHAKE_MESSAGE.copy(),
-                                     supportedConnectionTypes=connection_types)
+        response_message = await self._send_message(
+            self._HANDSHAKE_MESSAGE.copy(),
+            supportedConnectionTypes=connection_type_values
+        )
         # store the returned client id or set it to None if it's not in the
         # response
         if response_message["successful"]:
@@ -418,7 +424,7 @@ class _TransportBase(Transport):
             message["clientId"] = self.client_id
 
         if "connectionType" in message:
-            message["connectionType"] = self.name
+            message["connectionType"] = self.connection_type.value
 
     def _finalize_payload(self, payload):
         """Update the ``id``, ``clientId`` and ``connectionType`` message
@@ -713,8 +719,10 @@ class _TransportBase(Transport):
         advice = self._reconnect_advice.get("reconnect")
         # do a handshake operation if advised
         if advice == "handshake":
-            self._start_connect_task(self._handshake([self.name],
-                                                     delay=reconnect_timeout))
+            self._start_connect_task(
+                self._handshake([self.connection_type],
+                                delay=reconnect_timeout)
+            )
         # do a connect operation if advised
         elif advice == "retry":
             self._start_connect_task(self._connect(delay=reconnect_timeout))
@@ -798,7 +806,7 @@ class _TransportBase(Transport):
                                         data=data)
 
 
-@transport(DEFAULT_TRANSPORT_NAME)
+@register_transport(ConnectionType.LONG_POLLING)
 class LongPollingTransport(_TransportBase):
     """Long-polling type transport"""
 
@@ -884,7 +892,7 @@ class _WebSocket:
             self._socket = self._context = None
 
 
-@transport("websocket")
+@register_transport(ConnectionType.WEBSOCKET)
 class WebSocketTransport(_TransportBase):
     """WebSocket type transport"""
 

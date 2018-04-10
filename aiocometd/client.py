@@ -3,8 +3,10 @@ import asyncio
 import reprlib
 import logging
 from collections import abc
+from contextlib import suppress
 
-from .transport import create_transport, DEFAULT_TRANSPORT_NAME
+from .transport import create_transport, DEFAULT_CONNECTION_TYPE, \
+    ConnectionType
 from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
     TransportTimeoutError, ClientError
 
@@ -23,7 +25,8 @@ class Client:
         "/meta/unsubscribe": "Unsubscribe request failed."
     }
     #: Defualt connection types list
-    _DEFAULT_CONNECTION_TYPES = ["websocket", "long-polling"]
+    _DEFAULT_CONNECTION_TYPES = [ConnectionType.WEBSOCKET,
+                                 ConnectionType.LONG_POLLING]
 
     def __init__(self, endpoint, connection_types=None, *,
                  connection_timeout=10.0, ssl=None, prefetch_size=0,
@@ -58,12 +61,14 @@ class Client:
         self.endpoint = endpoint
         #: List of connection types to use in order of preference
         self._connection_types = None
-        if isinstance(connection_types, str):
+        if isinstance(connection_types, ConnectionType):
             self._connection_types = [connection_types]
         elif isinstance(connection_types, abc.Iterable):
             self._connection_types = list(connection_types)
         else:
             self._connection_types = self._DEFAULT_CONNECTION_TYPES
+        logger.debug("Created client with connection_types: {!r}"
+                     .format([t.value for t in self._connection_types]))
         #: event loop used to schedule tasks
         self._loop = loop or asyncio.get_event_loop()
         #: queue for consuming incoming event messages
@@ -101,17 +106,34 @@ class Client:
         else:
             return set()
 
+    @property
+    def connection_type(self):
+        """The current connection
+
+        :return: The current connection type in use if the client is open, \
+        otherwise ``None``
+        :rtype: ConnectionType or None
+        """
+        if self._transport is not None:
+            return self._transport.connection_type
+        return None
+
     def _pick_connection_type(self, connection_types):
-        """Pick a connection/transport type based on the  *connection_types*
+        """Pick a connection type based on the  *connection_types*
         supported by the server and on the user's preferences
 
-        :param list[str] connection_types: Connection/transport types \
+        :param list[str] connection_types: Connection types \
         supported by the server
         :return: The connection type with the highest precedence \
         which is supported by the server
-        :rtype: str or None
+        :rtype: ConnectionType or None
         """
-        intersection = (set(connection_types) &
+        server_connection_types = []
+        for type_string in connection_types:
+            with suppress(ValueError):
+                server_connection_types.append(ConnectionType(type_string))
+
+        intersection = (set(server_connection_types) &
                         set(self._connection_types))
         if not intersection:
             return None
@@ -130,7 +152,7 @@ class Client:
         server are supported
         """
         self._incoming_queue = asyncio.Queue(maxsize=self._prefetch_size)
-        transport = create_transport(DEFAULT_TRANSPORT_NAME,
+        transport = create_transport(DEFAULT_CONNECTION_TYPE,
                                      endpoint=self.endpoint,
                                      incoming_queue=self._incoming_queue,
                                      ssl=self.ssl)
@@ -139,13 +161,18 @@ class Client:
             response = await transport.handshake(self._connection_types)
             self._verify_response(response)
 
+            logger.debug(
+                "Connection types supported by the server: {!r}"
+                .format(response["supportedConnectionTypes"])
+            )
             connection_type = self._pick_connection_type(
-                response["supportedConnectionTypes"])
+                response["supportedConnectionTypes"]
+            )
             if not connection_type:
                 raise ClientError("None of the connection types offered by "
                                   "the server are supported.")
 
-            if transport.name != connection_type:
+            if transport.connection_type != connection_type:
                 client_id = transport.client_id
                 await transport.close()
                 transport = create_transport(
@@ -154,7 +181,8 @@ class Client:
                     incoming_queue=self._incoming_queue,
                     client_id=client_id,
                     ssl=self.ssl)
-
+            logger.debug("Picked connection type: {!r}"
+                         .format(connection_type.value))
             return transport
         except Exception:
             await transport.close()

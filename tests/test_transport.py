@@ -4,14 +4,18 @@ from asynctest import TestCase, mock
 from aiohttp import ClientSession, client_exceptions
 
 from aiocometd.transport import LongPollingTransport, TransportState, \
-    _TransportBase, _WebSocket, WebSocketTransport, transport, \
-    transport_classes, transport_types, create_transport
+    _TransportBase, _WebSocket, WebSocketTransport, register_transport, \
+    transport_classes, create_transport, ConnectionType
 from aiocometd.exceptions import TransportError, TransportInvalidOperation
 
 
 class TransportBase(_TransportBase):
     async def _send_final_payload(self, payload):
         pass
+
+    @property
+    def connection_type(self):
+        return ConnectionType.LONG_POLLING
 
 
 class TestTransportBase(TestCase):
@@ -92,7 +96,8 @@ class TestTransportBase(TestCase):
         self.assertEqual(message["id"], str(0))
         self.assertEqual(self.transport._message_id, 1)
         self.assertEqual(message["clientId"], self.transport.client_id)
-        self.assertEqual(message["connectionType"], self.transport.name)
+        self.assertEqual(message["connectionType"],
+                         self.transport.connection_type.value)
 
     def test_finalize_message_ignores_non_existing_fields(self):
         message = {
@@ -609,7 +614,7 @@ class TestTransportBase(TestCase):
 
     @mock.patch("aiocometd.transport.asyncio.sleep")
     async def test_handshake(self, sleep):
-        connection_types = ["type1"]
+        connection_types = [ConnectionType.WEBSOCKET]
         response = {
             "clientId": "id1",
             "successful": True
@@ -629,15 +634,17 @@ class TestTransportBase(TestCase):
 
         self.assertEqual(result, response)
         sleep.assert_not_called()
+        final_connection_types = [ConnectionType.WEBSOCKET.value,
+                                  self.transport.connection_type.value]
         self.transport._send_message.assert_called_with(
             message,
-            supportedConnectionTypes=connection_types + [self.transport.name])
+            supportedConnectionTypes=final_connection_types)
         self.assertEqual(self.transport.client_id, response["clientId"])
         self.assertTrue(self.transport._subscribe_on_connect)
 
     @mock.patch("aiocometd.transport.asyncio.sleep")
     async def test_handshake_failure(self, sleep):
-        connection_types = ["type1"]
+        connection_types = [ConnectionType.WEBSOCKET]
         response = {
             "clientId": "id1",
             "successful": False
@@ -657,9 +664,11 @@ class TestTransportBase(TestCase):
 
         self.assertEqual(result, response)
         sleep.assert_called_with(5, loop=self.loop)
+        final_connection_types = [ConnectionType.WEBSOCKET.value,
+                                  self.transport.connection_type.value]
         self.transport._send_message.assert_called_with(
             message,
-            supportedConnectionTypes=connection_types + [self.transport.name])
+            supportedConnectionTypes=final_connection_types)
         self.assertEqual(self.transport.client_id, None)
         self.assertFalse(self.transport._subscribe_on_connect)
 
@@ -950,8 +959,10 @@ class TestTransportBase(TestCase):
 
         self.transport._follow_advice(5)
 
-        self.transport._handshake.assert_called_with([self.transport.name],
-                                                     delay=5)
+        self.transport._handshake.assert_called_with(
+            [self.transport.connection_type],
+            delay=5
+        )
         self.transport._connect.assert_not_called()
         self.transport._start_connect_task.assert_called_with(
             self.transport._handshake.return_value
@@ -1166,8 +1177,9 @@ class TestLongPollingTransport(TestCase):
                                               incoming_queue=None,
                                               loop=None)
 
-    def test_name(self):
-        self.assertEqual(self.transport.name, "long-polling")
+    def test_connection_type(self):
+        self.assertEqual(self.transport.connection_type,
+                         ConnectionType.LONG_POLLING)
 
     async def test_send_payload(self):
         resp_data = [{
@@ -1315,8 +1327,9 @@ class TestWebSocketTransport(TestCase):
                                             incoming_queue=None,
                                             loop=None)
 
-    def test_name(self):
-        self.assertEqual(self.transport.name, "websocket")
+    def test_connection_type(self):
+        self.assertEqual(self.transport.connection_type,
+                         ConnectionType.WEBSOCKET)
 
     async def test_get_socket_for_short_request(self):
         channel = "/test/channel"
@@ -1466,37 +1479,33 @@ class TestTransportFactoryFunctions(TestCase):
     def tearDown(self):
         transport_classes.clear()
 
-    def test_transport(self):
-        name = "fake-transport"
+    def test_register_transport(self):
+        connection_type = ConnectionType.LONG_POLLING
 
-        @transport(name)
+        @register_transport(connection_type)
         class FakeTransport:
             "FakeTransport"
 
         obj = FakeTransport()
 
-        self.assertEqual(obj.name, name)
-        self.assertEqual(transport_classes[name], FakeTransport)
-
-    def test_transport_types(self):
-        transport_classes["test"] = None
-
-        self.assertEqual(transport_types(), transport_classes.keys())
+        self.assertEqual(obj.connection_type, connection_type)
+        self.assertEqual(transport_classes[connection_type], FakeTransport)
 
     def test_create_transport(self):
         transport = object()
         transport_cls = mock.MagicMock(return_value=transport)
-        transport_classes["test"] = transport_cls
+        transport_classes[ConnectionType.LONG_POLLING] = transport_cls
 
-        result = create_transport("test", "arg", kwarg="value")
+        result = create_transport(ConnectionType.LONG_POLLING,
+                                  "arg", kwarg="value")
 
         self.assertEqual(result, transport)
         transport_cls.assert_called_with("arg", kwarg="value")
 
     def test_create_transport_error(self):
-        name = "test"
+        connection_type = None
 
         with self.assertRaises(TransportInvalidOperation,
                                msg="There is no transport with "
-                                   "a name {!r}".format(name)):
-            create_transport(name)
+                                   "a name {!r}".format(connection_type)):
+            create_transport(connection_type)
