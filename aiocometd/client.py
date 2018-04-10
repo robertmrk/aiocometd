@@ -88,9 +88,14 @@ class Client:
     def __repr__(self):
         """Formal string representation"""
         cls_name = type(self).__name__
-        fmt_spec = "{}(endpoint={}, loop={})"
+        fmt_spec = "{}({}, {}, connection_timeout={}, ssl={}, " \
+                   "prefetch_size={}, loop={})"
         return fmt_spec.format(cls_name,
                                reprlib.repr(self.endpoint),
+                               reprlib.repr(self._connection_types),
+                               reprlib.repr(self.connection_timeout),
+                               reprlib.repr(self.ssl),
+                               reprlib.repr(self._prefetch_size),
                                reprlib.repr(self._loop))
 
     @property
