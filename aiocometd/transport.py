@@ -254,11 +254,12 @@ class _TransportBase(Transport):
     _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
     def __init__(self, *, endpoint, incoming_queue,
-                 reconnection_timeout=1, ssl=None, loop=None):
+                 client_id=None, reconnection_timeout=1, ssl=None, loop=None):
         """
         :param str endpoint: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
                                              messages
+        :param str client_id: Clinet id value assigned by the server
         :param reconnection_timeout: The time to wait before trying to \
         reconnect to the server after a network failure
         :type reconnection_timeout: None or int or float
@@ -281,7 +282,7 @@ class _TransportBase(Transport):
         #: event loop used to schedule tasks
         self._loop = loop or asyncio.get_event_loop()
         #: clinet id value assigned by the server
-        self._client_id = None
+        self._client_id = client_id
         #: message id which should be unique for every message during a client
         #: session
         self._message_id = 0
@@ -887,10 +888,11 @@ class _WebSocket:
 class WebSocketTransport(_TransportBase):
     """WebSocket type transport"""
 
-    def __init__(self, *, endpoint, incoming_queue, reconnection_timeout=1,
-                 ssl=None, loop=None):
+    def __init__(self, *, endpoint, incoming_queue, client_id=None,
+                 reconnection_timeout=1, ssl=None, loop=None):
         super().__init__(endpoint=endpoint,
                          incoming_queue=incoming_queue,
+                         client_id=client_id,
                          reconnection_timeout=reconnection_timeout,
                          ssl=ssl, loop=loop)
 
