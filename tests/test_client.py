@@ -508,16 +508,14 @@ class TestClient(TestCase):
         self.client.endpoint = "http://example.com"
         expected = "Client({}, {}, connection_timeout={}, ssl={}, " \
                    "prefetch_size={}, loop={})".format(
-            reprlib.repr(self.client.endpoint),
-            reprlib.repr(self.client._connection_types),
-            reprlib.repr(self.client.connection_timeout),
-            reprlib.repr(self.client.ssl),
-            reprlib.repr(self.client._prefetch_size),
-            reprlib.repr(self.client._loop)
-        )
+                        reprlib.repr(self.client.endpoint),
+                        reprlib.repr(self.client._connection_types),
+                        reprlib.repr(self.client.connection_timeout),
+                        reprlib.repr(self.client.ssl),
+                        reprlib.repr(self.client._prefetch_size),
+                        reprlib.repr(self.client._loop))
 
         result = repr(self.client)
-        print(result)
 
         self.assertEqual(result, expected)
 
