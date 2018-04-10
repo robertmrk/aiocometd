@@ -13,6 +13,59 @@ logger = logging.getLogger(__name__)
 
 
 @unique
+class ConnectionType(Enum):
+    """Connection types"""
+    #: Long polling connection type
+    LONG_POLLING = "long-polling"
+    #: Websocket connection type
+    WEBSOCKET = "websocket"
+
+
+DEFAULT_CONNECTION_TYPE = ConnectionType.LONG_POLLING
+transport_classes = {}
+
+
+def register_transport(type):
+    """Class decorator for registering transport classes
+
+    The class' connection_type property will be also defined to return the
+    given *connection_type*
+    :param ConnectionType type: A connection type
+    :return: The updated class
+    """
+    def decorator(cls):
+        global transport_classes
+        transport_classes[type] = cls
+
+        @property
+        def connection_type(instance):
+            return type
+
+        cls.connection_type = connection_type
+        return cls
+    return decorator
+
+
+def create_transport(connection_type, *args, **kwargs):
+    """Create a transport object that can be used for the given
+    *connection_type*
+
+    :param ConnectionType connection_type: A connection type
+    :param args: Positional arguments to pass to the transport
+    :param kwargs: Keyword arguments to pass to the transport
+    :return: A transport object
+    :rtype: Transport
+    """
+    global transport_classes
+
+    if connection_type not in transport_classes:
+        raise TransportInvalidOperation("There is no transport for connection "
+                                        "type {!r}".format(connection_type))
+
+    return transport_classes[connection_type](*args, **kwargs)
+
+
+@unique
 class TransportState(Enum):
     """Describes a transport object's state"""
     #: Transport is disconnected
@@ -29,8 +82,8 @@ class Transport(ABC):
     """Defines the operations that all transport classes should support"""
     @property
     @abstractmethod
-    def name(self):
-        """The transport type's identifier"""
+    def connection_type(self):
+        """The transport's connection type"""
 
     @property
     @abstractmethod
@@ -56,7 +109,7 @@ class Transport(ABC):
     async def handshake(self, connection_types):
         """Executes the handshake operation
 
-        :param list[str] connection_types: list of connection types
+        :param list[ConnectionType] connection_types: list of connection types
         :return: Handshake response
         :rtype: dict
         :raises TransportError: When the network request fails.
@@ -145,7 +198,7 @@ class _TransportBase(Transport):
     This class contains most of the transport operations implemented, it can
     be used as a base class for various concrete transport implementations.
     When subclassing, at a minimum the :meth:`_send_final_payload` and
-    :obj:`name` methods should be reimplemented.
+    :obj:`~Transport.connection_type` methods should be reimplemented.
     """
     #: Handshake message template
     _HANDSHAKE_MESSAGE = {
@@ -205,11 +258,12 @@ class _TransportBase(Transport):
     _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
     def __init__(self, *, endpoint, incoming_queue,
-                 reconnection_timeout=1, ssl=None, loop=None):
+                 client_id=None, reconnection_timeout=1, ssl=None, loop=None):
         """
         :param str endpoint: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
                                              messages
+        :param str client_id: Clinet id value assigned by the server
         :param reconnection_timeout: The time to wait before trying to \
         reconnect to the server after a network failure
         :type reconnection_timeout: None or int or float
@@ -232,7 +286,7 @@ class _TransportBase(Transport):
         #: event loop used to schedule tasks
         self._loop = loop or asyncio.get_event_loop()
         #: clinet id value assigned by the server
-        self._client_id = None
+        self._client_id = client_id
         #: message id which should be unique for every message during a client
         #: session
         self._message_id = 0
@@ -282,9 +336,9 @@ class _TransportBase(Transport):
             await asyncio.sleep(self._HTTP_SESSION_CLOSE_TIMEOUT)
 
     @property
-    def name(self):
-        """The transport type's identifier"""
-        return "transport-base"
+    def connection_type(self):
+        """The transport's connection type"""
+        return None  # pragma: no cover
 
     @property
     def endpoint(self):
@@ -315,7 +369,7 @@ class _TransportBase(Transport):
     async def handshake(self, connection_types):
         """Executes the handshake operation
 
-        :param list[str] connection_types: list of connection types
+        :param list[ConnectionType] connection_types: list of connection types
         :return: Handshake response
         :rtype: dict
         :raises TransportError: When the network request fails.
@@ -325,7 +379,7 @@ class _TransportBase(Transport):
     async def _handshake(self, connection_types, delay=None):
         """Executes the handshake operation
 
-        :param list[str] connection_types: list of connection types
+        :param list[ConnectionType] connection_types: list of connection types
         :param delay: Initial connection delay
         :type delay: None or int or float
         :return: Handshake response
@@ -340,13 +394,15 @@ class _TransportBase(Transport):
         connection_types = list(connection_types)
         # make sure that the supported connection types list contains this
         # transport
-        if self.name not in connection_types:
-            connection_types.append(self.name)
+        if self.connection_type not in connection_types:
+            connection_types.append(self.connection_type)
+        connection_type_values = [ct.value for ct in connection_types]
 
         # send message and await its response
-        response_message = \
-            await self._send_message(self._HANDSHAKE_MESSAGE.copy(),
-                                     supportedConnectionTypes=connection_types)
+        response_message = await self._send_message(
+            self._HANDSHAKE_MESSAGE.copy(),
+            supportedConnectionTypes=connection_type_values
+        )
         # store the returned client id or set it to None if it's not in the
         # response
         if response_message["successful"]:
@@ -368,7 +424,7 @@ class _TransportBase(Transport):
             message["clientId"] = self.client_id
 
         if "connectionType" in message:
-            message["connectionType"] = self.name
+            message["connectionType"] = self.connection_type.value
 
     def _finalize_payload(self, payload):
         """Update the ``id``, ``clientId`` and ``connectionType`` message
@@ -663,8 +719,10 @@ class _TransportBase(Transport):
         advice = self._reconnect_advice.get("reconnect")
         # do a handshake operation if advised
         if advice == "handshake":
-            self._start_connect_task(self._handshake([self.name],
-                                                     delay=reconnect_timeout))
+            self._start_connect_task(
+                self._handshake([self.connection_type],
+                                delay=reconnect_timeout)
+            )
         # do a connect operation if advised
         elif advice == "retry":
             self._start_connect_task(self._connect(delay=reconnect_timeout))
@@ -748,12 +806,9 @@ class _TransportBase(Transport):
                                         data=data)
 
 
+@register_transport(ConnectionType.LONG_POLLING)
 class LongPollingTransport(_TransportBase):
     """Long-polling type transport"""
-
-    @property
-    def name(self):
-        return "long-polling"
 
     async def _send_final_payload(self, payload):
         try:
@@ -837,13 +892,15 @@ class _WebSocket:
             self._socket = self._context = None
 
 
+@register_transport(ConnectionType.WEBSOCKET)
 class WebSocketTransport(_TransportBase):
     """WebSocket type transport"""
 
-    def __init__(self, *, endpoint, incoming_queue, reconnection_timeout=1,
-                 ssl=None, loop=None):
+    def __init__(self, *, endpoint, incoming_queue, client_id=None,
+                 reconnection_timeout=1, ssl=None, loop=None):
         super().__init__(endpoint=endpoint,
                          incoming_queue=incoming_queue,
+                         client_id=client_id,
                          reconnection_timeout=reconnection_timeout,
                          ssl=ssl, loop=loop)
 
@@ -860,10 +917,6 @@ class WebSocketTransport(_TransportBase):
                                              self.endpoint, ssl=self.ssl)
         #: exclusive lock for the _connect_websocket object
         self._connect_websocket_lock = asyncio.Lock()
-
-    @property
-    def name(self):
-        return "websocket"
 
     async def _get_socket(self, channel):
         """Get a websocket object for the given *channel*

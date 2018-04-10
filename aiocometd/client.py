@@ -2,10 +2,13 @@
 import asyncio
 import reprlib
 import logging
+from collections import abc
+from contextlib import suppress
 
-from . import transport
+from .transport import create_transport, DEFAULT_CONNECTION_TYPE, \
+    ConnectionType
 from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
-    TransportTimeoutError
+    TransportTimeoutError, ClientError
 
 
 logger = logging.getLogger(__name__)
@@ -21,11 +24,19 @@ class Client:
         "/meta/subscribe": "Subscribe request failed.",
         "/meta/unsubscribe": "Unsubscribe request failed."
     }
+    #: Defualt connection types list
+    _DEFAULT_CONNECTION_TYPES = [ConnectionType.WEBSOCKET,
+                                 ConnectionType.LONG_POLLING]
 
-    def __init__(self, endpoint, *, connection_timeout=10.0, ssl=None,
-                 prefetch_size=0, loop=None):
+    def __init__(self, endpoint, connection_types=None, *,
+                 connection_timeout=10.0, ssl=None, prefetch_size=0,
+                 loop=None):
         """
         :param str endpoint: CometD service url
+        :param connection_types: List of connection types in order of \
+        preference, or a single connection type name. If ``None``, \
+        ["websocket", "long-polling"] will be used.
+        :type connection_types: list[str], str or None
         :param connection_timeout: The maximum amount of time to wait for the \
         transport to re-establish a connection with the server when the \
         connection fails.
@@ -48,6 +59,16 @@ class Client:
         """
         #: CometD service url
         self.endpoint = endpoint
+        #: List of connection types to use in order of preference
+        self._connection_types = None
+        if isinstance(connection_types, ConnectionType):
+            self._connection_types = [connection_types]
+        elif isinstance(connection_types, abc.Iterable):
+            self._connection_types = list(connection_types)
+        else:
+            self._connection_types = self._DEFAULT_CONNECTION_TYPES
+        logger.debug("Created client with connection_types: {!r}"
+                     .format([t.value for t in self._connection_types]))
         #: event loop used to schedule tasks
         self._loop = loop or asyncio.get_event_loop()
         #: queue for consuming incoming event messages
@@ -67,9 +88,14 @@ class Client:
     def __repr__(self):
         """Formal string representation"""
         cls_name = type(self).__name__
-        fmt_spec = "{}(endpoint={}, loop={})"
+        fmt_spec = "{}({}, {}, connection_timeout={}, ssl={}, " \
+                   "prefetch_size={}, loop={})"
         return fmt_spec.format(cls_name,
                                reprlib.repr(self.endpoint),
+                               reprlib.repr(self._connection_types),
+                               reprlib.repr(self.connection_timeout),
+                               reprlib.repr(self.ssl),
+                               reprlib.repr(self._prefetch_size),
                                reprlib.repr(self._loop))
 
     @property
@@ -85,12 +111,96 @@ class Client:
         else:
             return set()
 
+    @property
+    def connection_type(self):
+        """The current connection
+
+        :return: The current connection type in use if the client is open, \
+        otherwise ``None``
+        :rtype: ConnectionType or None
+        """
+        if self._transport is not None:
+            return self._transport.connection_type
+        return None
+
+    def _pick_connection_type(self, connection_types):
+        """Pick a connection type based on the  *connection_types*
+        supported by the server and on the user's preferences
+
+        :param list[str] connection_types: Connection types \
+        supported by the server
+        :return: The connection type with the highest precedence \
+        which is supported by the server
+        :rtype: ConnectionType or None
+        """
+        server_connection_types = []
+        for type_string in connection_types:
+            with suppress(ValueError):
+                server_connection_types.append(ConnectionType(type_string))
+
+        intersection = (set(server_connection_types) &
+                        set(self._connection_types))
+        if not intersection:
+            return None
+
+        result = min(intersection,
+                     key=lambda type: self._connection_types.index(type))
+        return result
+
+    async def _negotiate_transport(self):
+        """Negotiate the transport type to use with the server and create the
+        transport object
+
+        :return: Transport object
+        :rtype: Transport
+        :raise ClientError: If none of the connection types offered by the \
+        server are supported
+        """
+        self._incoming_queue = asyncio.Queue(maxsize=self._prefetch_size)
+        transport = create_transport(DEFAULT_CONNECTION_TYPE,
+                                     endpoint=self.endpoint,
+                                     incoming_queue=self._incoming_queue,
+                                     ssl=self.ssl)
+
+        try:
+            response = await transport.handshake(self._connection_types)
+            self._verify_response(response)
+
+            logger.debug(
+                "Connection types supported by the server: {!r}"
+                .format(response["supportedConnectionTypes"])
+            )
+            connection_type = self._pick_connection_type(
+                response["supportedConnectionTypes"]
+            )
+            if not connection_type:
+                raise ClientError("None of the connection types offered by "
+                                  "the server are supported.")
+
+            if transport.connection_type != connection_type:
+                client_id = transport.client_id
+                await transport.close()
+                transport = create_transport(
+                    connection_type,
+                    endpoint=self.endpoint,
+                    incoming_queue=self._incoming_queue,
+                    client_id=client_id,
+                    ssl=self.ssl)
+            logger.debug("Picked connection type: {!r}"
+                         .format(connection_type.value))
+            return transport
+        except Exception:
+            await transport.close()
+            raise
+
     async def open(self):
         """Establish a connection with the CometD server
 
         This method works mostly the same way as the `handshake` method of
         CometD clients in the reference implementations.
 
+        :raise ClientError: If none of the connection types offered by the \
+        server are supported
         :raise ClientInvalidOperation:  If the client is already open, or in \
         other words if it isn't :obj:`closed`
         :raise TransportError: If a network or transport related error occurs
@@ -100,15 +210,7 @@ class Client:
         if not self.closed:
             raise ClientInvalidOperation("Client is already open.")
 
-        self._incoming_queue = asyncio.Queue(maxsize=self._prefetch_size)
-        self._transport = transport.LongPollingTransport(
-            endpoint=self.endpoint,
-            incoming_queue=self._incoming_queue,
-            ssl=self.ssl
-        )
-
-        response = await self._transport.handshake([self._transport.name])
-        self._verify_response(response)
+        self._transport = await self._negotiate_transport()
 
         response = await self._transport.connect()
         self._verify_response(response)
@@ -117,7 +219,7 @@ class Client:
     async def close(self):
         """Disconnect from the CometD server"""
         try:
-            if self._transport.client_id:
+            if self._transport and self._transport.client_id:
                 await self._transport.disconnect()
 
         # Don't raise TransportError if disconnect fails. Event if the
@@ -128,7 +230,8 @@ class Client:
         except TransportError as error:
             logger.debug("Disconnect request failed, {}".format(error))
         finally:
-            await self._transport.close()
+            if self._transport:
+                await self._transport.close()
             self._closed = True
 
     async def subscribe(self, channel):
