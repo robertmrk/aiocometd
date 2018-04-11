@@ -7,6 +7,7 @@ from aiocometd.transport import LongPollingTransport, TransportState, \
     _TransportBase, _WebSocket, WebSocketTransport, register_transport, \
     transport_classes, create_transport, ConnectionType
 from aiocometd.exceptions import TransportError, TransportInvalidOperation
+from aiocometd.extension import Extension
 
 
 class TransportBase(_TransportBase):
@@ -511,6 +512,34 @@ class TestTransportBase(TestCase):
         self.transport._is_matching_response.assert_called_with(payload[0],
                                                                 message)
         self.transport._consume_message.assert_not_called()
+
+    async def test_consume_payload_matching_without_advice_extension(self):
+        payload = [
+            {
+                "channel": "/meta/connect",
+                "successful": True,
+                "id": "1"
+            }
+        ]
+        message = object()
+        self.transport._update_subscriptions = mock.MagicMock()
+        self.transport._is_matching_response = \
+            mock.MagicMock(return_value=True)
+        self.transport._consume_message = mock.MagicMock()
+        extension = mock.create_autospec(spec=Extension)
+        headers = object()
+        self.transport._extensions = [extension]
+
+        result = await self.transport._consume_payload(
+            payload, headers=headers, find_response_for=message)
+
+        self.assertEqual(result, payload[0])
+        self.assertEqual(self.transport._reconnect_advice, {})
+        self.transport._update_subscriptions.assert_called_with(payload[0])
+        self.transport._is_matching_response.assert_called_with(payload[0],
+                                                                message)
+        self.transport._consume_message.assert_not_called()
+        extension.incoming.assert_called_with(payload, headers)
 
     async def test_consume_payload_matching_with_advice(self):
         payload = [
@@ -1163,6 +1192,8 @@ class TestTransportBase(TestCase):
         self.transport._send_final_payload = mock.CoroutineMock(
             return_value=response
         )
+        extension = mock.create_autospec(spec=Extension)
+        self.transport._extensions = [extension]
 
         result = await self.transport._send_payload(payload)
 
@@ -1170,6 +1201,7 @@ class TestTransportBase(TestCase):
         self.transport._finalize_payload.assert_called_with(payload)
         self.transport._send_final_payload.assert_called_with(payload,
                                                               headers={})
+        extension.outgoing.assert_called_with(payload, {})
 
 
 class TestLongPollingTransport(TestCase):

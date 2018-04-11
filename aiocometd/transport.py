@@ -257,8 +257,8 @@ class _TransportBase(Transport):
     #: Timeout to give to HTTP session to close itself
     _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
-    def __init__(self, *, endpoint, incoming_queue,
-                 client_id=None, reconnection_timeout=1, ssl=None, loop=None):
+    def __init__(self, *, endpoint, incoming_queue, client_id=None,
+                 reconnection_timeout=1, ssl=None, extensions=None, loop=None):
         """
         :param str endpoint: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
@@ -274,6 +274,8 @@ class _TransportBase(Transport):
         client_reference.html#aiohttp.Fingerprint>`_ for fingerprint \
         validation, :obj:`ssl.SSLContext` for custom SSL certificate \
         validation.
+        :param extensions: List of protocol extension objects
+        :type extensions: list[Extension] or None
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -312,6 +314,8 @@ class _TransportBase(Transport):
         self._http_semaphore = asyncio.Semaphore(2, loop=self._loop)
         #: http session
         self._http_session = None
+        #: List of protocol extension objects
+        self._extensions = extensions or []
 
     async def _get_http_session(self):
         """Factory method for getting the current HTTP session
@@ -468,6 +472,9 @@ class _TransportBase(Transport):
         """
         self._finalize_payload(payload)
         headers = {}
+        # process outgoing payload and headers with the extensions
+        for extension in self._extensions:
+            extension.outgoing(payload, headers)
         return await self._send_final_payload(payload, headers=headers)
 
     @abstractmethod
@@ -582,6 +589,9 @@ class _TransportBase(Transport):
         otherwise ``None``
         :rtype: dict or None
         """
+        # process incoming payload and headers with the extensions
+        for extension in self._extensions:
+            extension.incoming(payload, headers)
         # return None if no response message is found for *find_response_for*
         result = None
         for message in payload:
@@ -896,12 +906,12 @@ class WebSocketTransport(_TransportBase):
     """WebSocket type transport"""
 
     def __init__(self, *, endpoint, incoming_queue, client_id=None,
-                 reconnection_timeout=1, ssl=None, loop=None):
+                 reconnection_timeout=1, ssl=None, extensions=None, loop=None):
         super().__init__(endpoint=endpoint,
                          incoming_queue=incoming_queue,
                          client_id=client_id,
                          reconnection_timeout=reconnection_timeout,
-                         ssl=ssl, loop=loop)
+                         ssl=ssl, extensions=extensions, loop=loop)
 
         #: channels used during the connect task, requests on these channels
         #: are usually long running
