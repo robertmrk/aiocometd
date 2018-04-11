@@ -467,10 +467,11 @@ class _TransportBase(Transport):
         :raises TransportError: When the network request fails.
         """
         self._finalize_payload(payload)
-        return await self._send_final_payload(payload)
+        headers = {}
+        return await self._send_final_payload(payload, headers=headers)
 
     @abstractmethod
-    async def _send_final_payload(self, payload):
+    async def _send_final_payload(self, payload, *, headers):
         """Send *payload* to server
 
         Send the *payload* to the server and return once a
@@ -482,6 +483,7 @@ class _TransportBase(Transport):
         can be used.
 
         :param list[dict] payload: A list of messages
+        :param dict headers: Headers to send
         :return: The response message for the first message in the *payload*
         :rtype: dict
         :raises TransportError: When the network request fails.
@@ -565,12 +567,15 @@ class _TransportBase(Transport):
                     response_message["subscription"] in self._subscriptions):
                 self._subscriptions.remove(response_message["subscription"])
 
-    async def _consume_payload(self, payload, *, find_response_for=None):
+    async def _consume_payload(self, payload, *, headers=None,
+                               find_response_for=None):
         """Enqueue event messages for the consumers and update the internal
         state of the transport, based on response messages in the *payload*.
 
         :param payload: A list of response messages
         :type payload: list[dict]
+        :param headers: Received headers
+        :type headers: dict or None
         :param dict find_response_for: Find and return the matching \
         response message for the given *find_response_for* message.
         :return: The response message for the *find_response_for* message, \
@@ -810,17 +815,18 @@ class _TransportBase(Transport):
 class LongPollingTransport(_TransportBase):
     """Long-polling type transport"""
 
-    async def _send_final_payload(self, payload):
+    async def _send_final_payload(self, payload, *, headers):
         try:
             session = await self._get_http_session()
             async with self._http_semaphore:
                 response = await session.post(self._endpoint, json=payload,
-                                              ssl=self.ssl)
+                                              ssl=self.ssl, headers=headers)
             response_payload = await response.json()
+            headers = response.headers
         except aiohttp.client_exceptions.ClientError as error:
             logger.debug("Failed to send payload, {}".format(error))
             raise TransportError(str(error)) from error
-        return await self._consume_payload(response_payload,
+        return await self._consume_payload(response_payload, headers=headers,
                                            find_response_for=payload[0])
 
 
@@ -842,30 +848,22 @@ class _WebSocket:
         self._constructor_kwargs = kwargs
         self._context = None
         self._socket = None
-
-    def __await__(self):
-        """Create or return an existing websocket object
-
-        :return: Websocket object
-        :rtype: `aiohttp.ClientWebSocketResponse \
-        <https://aiohttp.readthedocs.io/en/stable\
-        /client_reference.html#aiohttp.ClientWebSocketResponse>`_
-        """
-        gen = self._get_socket().__await__()
-        return gen
+        self._headers = None
 
     async def close(self):
         """Close the websocket"""
         await self._exit()
 
-    async def _get_socket(self):
+    async def get_socket(self, headers):
         """Create or return an existing websocket object
 
+        :param dict headers: Headers to send
         :return: Websocket object
         :rtype: `aiohttp.ClientWebSocketResponse \
         <https://aiohttp.readthedocs.io/en/stable\
         /client_reference.html#aiohttp.ClientWebSocketResponse>`_
         """
+        self._headers = headers
         # if a the websocket object already exists and if it's in closed state
         # exit the context manager properly and clear the references
         if self._socket is not None and self._socket.closed:
@@ -881,8 +879,9 @@ class _WebSocket:
     async def _enter(self):
         """Enter websocket context"""
         session = await self._session_factory()
-        self._context = session.ws_connect(*self._constructor_args,
-                                           **self._constructor_kwargs)
+        kwargs = self._constructor_kwargs.copy()
+        kwargs["headers"] = self._headers
+        self._context = session.ws_connect(*self._constructor_args, **kwargs)
         self._socket = await self._context.__aenter__()
 
     async def _exit(self):
@@ -918,32 +917,42 @@ class WebSocketTransport(_TransportBase):
         #: exclusive lock for the _connect_websocket object
         self._connect_websocket_lock = asyncio.Lock()
 
-    async def _get_socket(self, channel):
+    async def _get_socket(self, channel, headers):
         """Get a websocket object for the given *channel*
 
         Returns different websocket objects for long running and short duration
         requests, so while a long running request is pending, short duration
         requests can be transmitted.
+
+        :param str channel: CometD channel name
+        :param dict headers: Headers to send
+        :return: websocket object
+        :rtype: aiohttp.ClientWebSocketResponse
         """
         if channel in self._connect_task_channels:
-            return await self._connect_websocket
+            return await self._connect_websocket.get_socket(headers)
         else:
-            return await self._websocket
+            return await self._websocket.get_socket(headers)
 
     def _get_socket_lock(self, channel):
-        """Get an exclusive lock object for the given *channel*"""
+        """Get an exclusive lock object for the given *channel*
+
+        :param str channel: CometD channel name
+        :return: lock object for the *channel*
+        :rtype: asyncio.Lock
+        """
         if channel in self._connect_task_channels:
             return self._connect_websocket_lock
         else:
             return self._websocket_lock
 
-    async def _send_final_payload(self, payload):
+    async def _send_final_payload(self, payload, *, headers):
         try:
             # the channel of the first message
             channel = payload[0]["channel"]
             # get the socket and the lock associated with it, for the channel
             # of the first message
-            socket = await self._get_socket(channel)
+            socket = await self._get_socket(channel, headers)
             lock = self._get_socket_lock(channel)
 
             async with lock:
@@ -973,6 +982,7 @@ class WebSocketTransport(_TransportBase):
             response_payload = response.json()
             matching_response = await self._consume_payload(
                 response_payload,
+                headers=None,
                 find_response_for=payload[0])
             if matching_response:
                 return matching_response

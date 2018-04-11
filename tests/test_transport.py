@@ -1168,7 +1168,8 @@ class TestTransportBase(TestCase):
 
         self.assertEqual(result, response)
         self.transport._finalize_payload.assert_called_with(payload)
-        self.transport._send_final_payload.assert_called_with(payload)
+        self.transport._send_final_payload.assert_called_with(payload,
+                                                              headers={})
 
 
 class TestLongPollingTransport(TestCase):
@@ -1189,6 +1190,7 @@ class TestLongPollingTransport(TestCase):
         }]
         response_mock = mock.MagicMock()
         response_mock.json = mock.CoroutineMock(return_value=resp_data)
+        response_mock.headers = object()
         session = mock.MagicMock()
         session.post = mock.CoroutineMock(return_value=response_mock)
         self.transport._get_http_session = \
@@ -1198,17 +1200,21 @@ class TestLongPollingTransport(TestCase):
         self.transport.ssl = object()
         self.transport._consume_payload = \
             mock.CoroutineMock(return_value=resp_data[0])
+        headers = dict(key="value")
 
-        response = await self.transport._send_final_payload(payload)
+        response = await self.transport._send_final_payload(payload,
+                                                            headers=headers)
 
         self.assertEqual(response, resp_data[0])
         self.transport._http_semaphore.__aenter__.assert_called()
         self.transport._http_semaphore.__aexit__.assert_called()
         session.post.assert_called_with(self.transport._endpoint,
                                         json=payload,
-                                        ssl=self.transport.ssl)
+                                        ssl=self.transport.ssl,
+                                        headers=headers)
         self.transport._consume_payload.assert_called_with(
             resp_data,
+            headers=response_mock.headers,
             find_response_for=payload[0])
 
     async def test_send_payload_client_error(self):
@@ -1229,10 +1235,12 @@ class TestLongPollingTransport(TestCase):
         self.transport.ssl = object()
         self.transport._consume_payload = \
             mock.CoroutineMock(return_value=resp_data[0])
+        headers = dict(key="value")
 
         with self.assertLogs("aiocometd.transport", level="DEBUG") as log:
             with self.assertRaisesRegex(TransportError, str(post_exception)):
-                await self.transport._send_final_payload(payload)
+                await self.transport._send_final_payload(payload,
+                                                         headers=headers)
 
         log_message = "DEBUG:aiocometd.transport:" \
                       "Failed to send payload, {}".format(post_exception)
@@ -1241,7 +1249,8 @@ class TestLongPollingTransport(TestCase):
         self.transport._http_semaphore.__aexit__.assert_called()
         session.post.assert_called_with(self.transport._endpoint,
                                         json=payload,
-                                        ssl=self.transport.ssl)
+                                        ssl=self.transport.ssl,
+                                        headers=headers)
         self.transport._consume_payload.assert_not_called()
 
 
@@ -1260,7 +1269,10 @@ class TestWebSocket(TestCase):
 
         await self.websocket._enter()
 
-        self.session.ws_connect.assert_called_with(self.url)
+        self.session.ws_connect.assert_called_with(
+            self.url,
+            headers=self.websocket._headers
+        )
         self.assertEqual(self.websocket._context, context)
         self.assertEqual(self.websocket._socket, socket)
 
@@ -1284,41 +1296,39 @@ class TestWebSocket(TestCase):
 
         self.websocket._exit.assert_called()
 
-    async def test_await(self):
-        socket = mock.MagicMock()
-        self.websocket._socket = socket
-
-        result = await self.websocket
-
-        self.assertEqual(result, socket)
-
     async def test_get_socket_creates_socket(self):
         self.websocket._enter = mock.CoroutineMock()
+        headers = {}
 
-        await self.websocket._get_socket()
+        await self.websocket.get_socket(headers)
 
         self.websocket._enter.assert_called()
+        self.assertIs(self.websocket._headers, headers)
 
     async def test_get_socket_returns_open_socket(self):
         self.websocket._enter = mock.CoroutineMock()
         socket = mock.MagicMock()
         socket.closed = False
         self.websocket._socket = socket
+        headers = {}
 
-        result = await self.websocket._get_socket()
+        result = await self.websocket.get_socket(headers)
 
         self.assertEqual(result, socket)
         self.websocket._enter.assert_not_called()
+        self.assertIs(self.websocket._headers, headers)
 
     async def test_get_socket_creates_new_if_closed(self):
         self.websocket._exit = mock.CoroutineMock()
         socket = mock.MagicMock()
         socket.closed = True
         self.websocket._socket = socket
+        headers = {}
 
-        await self.websocket._get_socket()
+        await self.websocket.get_socket(headers)
 
         self.websocket._exit.assert_called()
+        self.assertIs(self.websocket._headers, headers)
 
 
 class TestWebSocketTransport(TestCase):
@@ -1335,23 +1345,32 @@ class TestWebSocketTransport(TestCase):
         channel = "/test/channel"
         self.assertNotIn(channel, self.transport._connect_task_channels)
         expected_socket = object()
-        self.transport._websocket = asyncio.Future()
-        self.transport._websocket.set_result(expected_socket)
+        self.transport._websocket = mock.MagicMock()
+        self.transport._websocket.get_socket = mock.CoroutineMock(
+            return_value=expected_socket
+        )
+        headers = object()
 
-        result = await self.transport._get_socket(channel)
+        result = await self.transport._get_socket(channel, headers)
 
         self.assertIs(result, expected_socket)
+        self.transport._websocket.get_socket.assert_called_with(headers)
 
     async def test_get_socket_for_long_duration_request(self):
         channel = "/meta/connect"
         self.assertIn(channel, self.transport._connect_task_channels)
         expected_socket = object()
-        self.transport._connect_websocket = asyncio.Future()
-        self.transport._connect_websocket.set_result(expected_socket)
+        self.transport._connect_websocket = mock.MagicMock()
+        self.transport._connect_websocket.get_socket = mock.CoroutineMock(
+            return_value=expected_socket
+        )
+        headers = object()
 
-        result = await self.transport._get_socket(channel)
+        result = await self.transport._get_socket(channel, headers)
 
         self.assertIs(result, expected_socket)
+        self.transport._connect_websocket.get_socket.assert_called_with(
+            headers)
 
     def test_get_lock_for_short_request(self):
         channel = "/test/channel"
@@ -1404,6 +1423,7 @@ class TestWebSocketTransport(TestCase):
         socket.send_json.assert_called_with(payload)
         self.transport._consume_payload.assert_called_with(
             response_payload,
+            headers=None,
             find_response_for=payload[0]
         )
 
@@ -1425,6 +1445,7 @@ class TestWebSocketTransport(TestCase):
         socket.send_json.assert_called_with(payload)
         self.transport._consume_payload.assert_called_with(
             response_payload,
+            headers=None,
             find_response_for=payload[0]
         )
 
@@ -1438,11 +1459,13 @@ class TestWebSocketTransport(TestCase):
         self.transport._get_socket_lock = mock.MagicMock(return_value=lock)
         self.transport._send_socket_payload = \
             mock.CoroutineMock(return_value=response)
+        headers = object()
 
-        result = await self.transport._send_final_payload(payload)
+        result = await self.transport._send_final_payload(payload,
+                                                          headers=headers)
 
         self.assertEqual(result, response)
-        self.transport._get_socket.assert_called_with(channel)
+        self.transport._get_socket.assert_called_with(channel, headers)
         self.transport._get_socket_lock.assert_called_with(channel)
         lock.__aenter__.assert_called()
         lock.__aexit__.assert_called()
@@ -1459,15 +1482,17 @@ class TestWebSocketTransport(TestCase):
         self.transport._get_socket_lock = mock.MagicMock(return_value=lock)
         self.transport._send_socket_payload = \
             mock.CoroutineMock(side_effect=exception)
+        headers = object()
 
         with self.assertLogs("aiocometd.transport", level="DEBUG") as log:
             with self.assertRaisesRegex(TransportError, str(exception)):
-                await self.transport._send_final_payload(payload)
+                await self.transport._send_final_payload(payload,
+                                                         headers=headers)
 
         log_message = "DEBUG:aiocometd.transport:" \
                       "Failed to send payload, {}".format(exception)
         self.assertEqual(log.output, [log_message])
-        self.transport._get_socket.assert_called_with(channel)
+        self.transport._get_socket.assert_called_with(channel, headers)
         self.transport._get_socket_lock.assert_called_with(channel)
         lock.__aenter__.assert_called()
         lock.__aexit__.assert_called()
