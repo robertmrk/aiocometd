@@ -30,7 +30,7 @@ class Client:
 
     def __init__(self, endpoint, connection_types=None, *,
                  connection_timeout=10.0, ssl=None, prefetch_size=0,
-                 loop=None):
+                 extensions=None, loop=None):
         """
         :param str endpoint: CometD service url
         :param connection_types: List of connection types in order of \
@@ -52,6 +52,8 @@ class Client:
         from the server. If the number of prefetched messages reach this size \
         all following messages will be dropped until messages get consumed. \
         If it is less than or equal to zero, the size is infinite.
+        :param extensions: List of protocol extension objects
+        :type extensions: list[Extension] or None
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -84,18 +86,21 @@ class Client:
         self.ssl = ssl
         #: the maximum number of messages to prefetch from the server
         self._prefetch_size = prefetch_size
+        #: List of protocol extension objects
+        self.extensions = extensions
 
     def __repr__(self):
         """Formal string representation"""
         cls_name = type(self).__name__
         fmt_spec = "{}({}, {}, connection_timeout={}, ssl={}, " \
-                   "prefetch_size={}, loop={})"
+                   "prefetch_size={}, extensions={}, loop={})"
         return fmt_spec.format(cls_name,
                                reprlib.repr(self.endpoint),
                                reprlib.repr(self._connection_types),
                                reprlib.repr(self.connection_timeout),
                                reprlib.repr(self.ssl),
                                reprlib.repr(self._prefetch_size),
+                               reprlib.repr(self.extensions),
                                reprlib.repr(self._loop))
 
     @property
@@ -160,7 +165,9 @@ class Client:
         transport = create_transport(DEFAULT_CONNECTION_TYPE,
                                      endpoint=self.endpoint,
                                      incoming_queue=self._incoming_queue,
-                                     ssl=self.ssl)
+                                     ssl=self.ssl,
+                                     extensions=self.extensions,
+                                     loop=self._loop)
 
         try:
             response = await transport.handshake(self._connection_types)
@@ -185,7 +192,9 @@ class Client:
                     endpoint=self.endpoint,
                     incoming_queue=self._incoming_queue,
                     client_id=client_id,
-                    ssl=self.ssl)
+                    ssl=self.ssl,
+                    extensions=self.extensions,
+                    loop=self._loop)
             logger.debug("Picked connection type: {!r}"
                          .format(connection_type.value))
             return transport

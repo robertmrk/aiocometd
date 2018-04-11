@@ -166,6 +166,7 @@ class TestClient(TestCase):
         self.client._pick_connection_type = \
             mock.MagicMock(return_value=DEFAULT_CONNECTION_TYPE)
         self.client._verify_response = mock.MagicMock()
+        self.client.extensions = object()
 
         with self.assertLogs("aiocometd.client", "DEBUG") as log:
             result = await self.client._negotiate_transport()
@@ -175,7 +176,9 @@ class TestClient(TestCase):
             DEFAULT_CONNECTION_TYPE,
             endpoint=self.client.endpoint,
             incoming_queue=self.client._incoming_queue,
-            ssl=self.client.ssl)
+            ssl=self.client.ssl,
+            extensions=self.client.extensions,
+            loop=self.client._loop)
         transport.handshake.assert_called_with(self.client._connection_types)
         self.client._verify_response.assert_called_with(response)
         self.client._pick_connection_type.assert_called_with(
@@ -202,6 +205,7 @@ class TestClient(TestCase):
         create_transport.return_value = transport
         self.client._pick_connection_type = \
             mock.MagicMock(return_value=None)
+        self.client.extensions = object()
 
         with self.assertRaises(ClientError,
                                msg="None of the connection types offered "
@@ -213,7 +217,9 @@ class TestClient(TestCase):
             DEFAULT_CONNECTION_TYPE,
             endpoint=self.client.endpoint,
             incoming_queue=self.client._incoming_queue,
-            ssl=self.client.ssl)
+            ssl=self.client.ssl,
+            extensions=self.client.extensions,
+            loop=self.client._loop)
         transport.handshake.assert_called_with(self.client._connection_types)
         self.client._pick_connection_type.assert_called_with(
             response["supportedConnectionTypes"])
@@ -245,6 +251,7 @@ class TestClient(TestCase):
         self.client._pick_connection_type = \
             mock.MagicMock(return_value=non_default_type)
         self.client._verify_response = mock.MagicMock()
+        self.client.extensions = object()
 
         with self.assertLogs("aiocometd.client", "DEBUG") as log:
             result = await self.client._negotiate_transport()
@@ -256,13 +263,17 @@ class TestClient(TestCase):
                     DEFAULT_CONNECTION_TYPE,
                     endpoint=self.client.endpoint,
                     incoming_queue=self.client._incoming_queue,
-                    ssl=self.client.ssl),
+                    ssl=self.client.ssl,
+                    extensions=self.client.extensions,
+                    loop=self.client._loop),
                 mock.call(
                     non_default_type,
                     endpoint=self.client.endpoint,
                     incoming_queue=self.client._incoming_queue,
                     client_id=transport1.client_id,
-                    ssl=self.client.ssl)
+                    ssl=self.client.ssl,
+                    extensions=self.client.extensions,
+                    loop=self.client._loop)
             ]
         )
         transport1.handshake.assert_called_with(self.client._connection_types)
@@ -507,12 +518,13 @@ class TestClient(TestCase):
     def test_repr(self):
         self.client.endpoint = "http://example.com"
         expected = "Client({}, {}, connection_timeout={}, ssl={}, " \
-                   "prefetch_size={}, loop={})".format(
+                   "prefetch_size={}, extensions={}, loop={})".format(
                         reprlib.repr(self.client.endpoint),
                         reprlib.repr(self.client._connection_types),
                         reprlib.repr(self.client.connection_timeout),
                         reprlib.repr(self.client.ssl),
                         reprlib.repr(self.client._prefetch_size),
+                        reprlib.repr(self.client.extensions),
                         reprlib.repr(self.client._loop))
 
         result = repr(self.client)
