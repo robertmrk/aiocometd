@@ -33,6 +33,15 @@ aiocometd.exceptions module
     :show-inheritance:
 
 
+aiocometd.utils module
+---------------------------
+
+.. automodule:: aiocometd.utils
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+
 Module contents
 ---------------
 
