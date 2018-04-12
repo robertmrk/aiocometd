@@ -474,7 +474,7 @@ class _TransportBase(Transport):
         headers = {}
         # process outgoing payload and headers with the extensions
         for extension in self._extensions:
-            extension.outgoing(payload, headers)
+            await extension.outgoing(payload, headers)
         return await self._send_final_payload(payload, headers=headers)
 
     @abstractmethod
@@ -591,7 +591,7 @@ class _TransportBase(Transport):
         """
         # process incoming payload and headers with the extensions
         for extension in self._extensions:
-            extension.incoming(payload, headers)
+            await extension.incoming(payload, headers)
         # return None if no response message is found for *find_response_for*
         result = None
         for message in payload:

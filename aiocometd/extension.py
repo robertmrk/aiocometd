@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 class Extension(ABC):
     """Defines operations supported by extensions"""
     @abstractmethod
-    def outgoing(self, payload, headers):
+    async def outgoing(self, payload, headers):
         """Process outgoing *payload* and *headers*
 
         Called just before a payload is sent
@@ -15,7 +15,7 @@ class Extension(ABC):
         """
 
     @abstractmethod
-    def incoming(self, payload, headers=None):
+    async def incoming(self, payload, headers=None):
         """Process incoming *payload* and *headers*
 
         Called just after a payload is received
