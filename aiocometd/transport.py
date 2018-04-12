@@ -817,6 +817,11 @@ class _TransportBase(Transport):
         else:
             logger.debug("No reconnect advice provided, no more operations "
                          "will be scheduled.")
+            # if there is a finished connect taks enqueue its result
+            # since it's a server error that should be handled by the
+            # consumer
+            if self._connect_task and self._connect_task.done():
+                self._enqueue_message(self._connect_task.result())
             self._state = TransportState.DISCONNECTED
 
     async def disconnect(self):

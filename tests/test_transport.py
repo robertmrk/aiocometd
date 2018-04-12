@@ -1057,6 +1057,35 @@ class TestTransportBase(TestCase):
             self.transport._start_connect_task.assert_not_called()
             self.assertEqual(self.transport.state, TransportState.DISCONNECTED)
 
+    def test_follow_advice_none_with_done_task(self):
+        advices = ["none", "", None]
+        for advice in advices:
+            self.transport._state = TransportState.CONNECTED
+            self.transport._reconnect_advice = {
+                "interval": 1,
+                "reconnect": advice
+            }
+            self.transport._handshake = mock.MagicMock(return_value=object())
+            self.transport._connect = mock.MagicMock(return_value=object())
+            self.transport._start_connect_task = mock.MagicMock()
+            self.transport._connect_task = mock.MagicMock()
+            connect_result = object()
+            self.transport._connect_task.result.return_value = connect_result
+            self.transport._enqueue_message = mock.MagicMock()
+
+            with self.assertLogs("aiocometd.transport", "DEBUG") as log:
+                self.transport._follow_advice(5)
+
+            self.assertEqual(log.output,
+                             ["DEBUG:aiocometd.transport:No reconnect advice "
+                              "provided, no more operations will be "
+                              "scheduled."])
+            self.transport._handshake.assert_not_called()
+            self.transport._connect.assert_not_called()
+            self.transport._start_connect_task.assert_not_called()
+            self.assertEqual(self.transport.state, TransportState.DISCONNECTED)
+            self.transport._enqueue_message.assert_called_with(connect_result)
+
     def test_client_id(self):
         self.assertIs(self.transport.client_id,
                       self.transport._client_id)
