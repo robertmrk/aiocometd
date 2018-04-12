@@ -3,10 +3,12 @@ import asyncio
 import logging
 from enum import Enum, unique, auto
 from abc import ABC, abstractmethod
+from http import HTTPStatus
 
 import aiohttp
 
 from .exceptions import TransportError, TransportInvalidOperation
+from .utils import get_error_code
 
 
 logger = logging.getLogger(__name__)
@@ -258,7 +260,8 @@ class _TransportBase(Transport):
     _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
     def __init__(self, *, endpoint, incoming_queue, client_id=None,
-                 reconnection_timeout=1, ssl=None, extensions=None, loop=None):
+                 reconnection_timeout=1, ssl=None, extensions=None, auth=None,
+                 loop=None):
         """
         :param str endpoint: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
@@ -276,6 +279,7 @@ class _TransportBase(Transport):
         validation.
         :param extensions: List of protocol extension objects
         :type extensions: list[Extension] or None
+        :param AuthExtension auth: An auth extension
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -316,6 +320,8 @@ class _TransportBase(Transport):
         self._http_session = None
         #: List of protocol extension objects
         self._extensions = extensions or []
+        #: An auth extension
+        self._auth = auth
 
     async def _get_http_session(self):
         """Factory method for getting the current HTTP session
@@ -456,7 +462,31 @@ class _TransportBase(Transport):
         :raises TransportError: When the network request fails.
         """
         message.update(kwargs)
-        return await self._send_payload([message])
+        return await self._send_payload_with_auth([message])
+
+    async def _send_payload_with_auth(self, payload):
+        """Finalize and send *payload* to server and retry on authentication
+        failure
+
+        Finalize and send the *payload* to the server and return once a
+        response message can be provided for the first message in the
+        *payload*.
+
+        :param list[dict] payload: A list of messages
+        :return: The response message for the first message in the *payload*
+        :rtype: dict
+        :raises TransportError: When the network request fails.
+        """
+        response = await self._send_payload(payload)
+
+        # if there is an auth extension and the response is an auth error
+        if self._auth and self._is_auth_error_message(response):
+            # then try to authenticate and resend the payload
+            await self._auth.authenticate()
+            return await self._send_payload(payload)
+
+        # otherwise return the response
+        return response
 
     async def _send_payload(self, payload):
         """Finalize and send *payload* to server
@@ -472,10 +502,21 @@ class _TransportBase(Transport):
         """
         self._finalize_payload(payload)
         headers = {}
-        # process outgoing payload and headers with the extensions
+        # process the outgoing payload with the extensions
+        await self._process_outgoing_payload(payload, headers)
+        # send the payload to the server
+        return await self._send_final_payload(payload, headers=headers)
+
+    async def _process_outgoing_payload(self, payload, headers):
+        """Process the outgoing *payload* and *headers* with the extensions
+
+        :param list[dict] payload: A list of messages
+        :param dict headers: Headers to send
+        """
         for extension in self._extensions:
             await extension.outgoing(payload, headers)
-        return await self._send_final_payload(payload, headers=headers)
+        if self._auth:
+            await self._auth.outgoing(payload, headers)
 
     @abstractmethod
     async def _send_final_payload(self, payload, *, headers):
@@ -541,6 +582,23 @@ class _TransportBase(Transport):
                 not response_message["channel"].startswith("/service/") and
                 "data" in response_message)
 
+    def _is_auth_error_message(self, response_message):
+        """Check whether the *response_message* is an authentication error
+        message
+
+        :param response_message: A response message
+        :return: True if the *response_message* is an authentication error \
+        message, otherwise False.
+        :rtype: bool
+        """
+        error_code = get_error_code(response_message.get("error"))
+        # Strictly speaking, only UNAUTHORIZED should be considered as an auth
+        # error, but some channels can also react with FORBIDDEN for auth
+        # failures. This is certainly true for /meta/handshake, and since this
+        # might happen for other channels as well, it's better to stay safe
+        # and treat FORBIDDEN also as a potential auth error
+        return error_code in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN)
+
     def _consume_message(self, response_message):
         """Enqueue the *response_message* for consumers if it's a type of
         message that consumers should receive
@@ -574,6 +632,19 @@ class _TransportBase(Transport):
                     response_message["subscription"] in self._subscriptions):
                 self._subscriptions.remove(response_message["subscription"])
 
+    async def _process_incoming_payload(self, payload, headers=None):
+        """Process incoming *payload* and *headers* with the extensions
+
+        :param payload: A list of response messages
+        :type payload: list[dict]
+        :param headers: Received headers
+        :type headers: dict or None
+        """
+        if self._auth:
+            await self._auth.incoming(payload, headers)
+        for extension in self._extensions:
+            await extension.incoming(payload, headers)
+
     async def _consume_payload(self, payload, *, headers=None,
                                find_response_for=None):
         """Enqueue event messages for the consumers and update the internal
@@ -590,8 +661,8 @@ class _TransportBase(Transport):
         :rtype: dict or None
         """
         # process incoming payload and headers with the extensions
-        for extension in self._extensions:
-            await extension.incoming(payload, headers)
+        await self._process_incoming_payload(payload, headers)
+
         # return None if no response message is found for *find_response_for*
         result = None
         for message in payload:
@@ -689,7 +760,7 @@ class _TransportBase(Transport):
                 extra_message = self._SUBSCRIBE_MESSAGE.copy()
                 extra_message["subscription"] = subscription
                 payload.append(extra_message)
-        result = await self._send_payload(payload)
+        result = await self._send_payload_with_auth(payload)
         self._subscribe_on_connect = not result["successful"]
         return result
 
@@ -906,12 +977,13 @@ class WebSocketTransport(_TransportBase):
     """WebSocket type transport"""
 
     def __init__(self, *, endpoint, incoming_queue, client_id=None,
-                 reconnection_timeout=1, ssl=None, extensions=None, loop=None):
+                 reconnection_timeout=1, ssl=None, extensions=None, auth=None,
+                 loop=None):
         super().__init__(endpoint=endpoint,
                          incoming_queue=incoming_queue,
                          client_id=client_id,
                          reconnection_timeout=reconnection_timeout,
-                         ssl=ssl, extensions=extensions, loop=loop)
+                         ssl=ssl, extensions=extensions, auth=auth, loop=loop)
 
         #: channels used during the connect task, requests on these channels
         #: are usually long running

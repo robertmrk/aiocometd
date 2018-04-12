@@ -167,6 +167,7 @@ class TestClient(TestCase):
             mock.MagicMock(return_value=DEFAULT_CONNECTION_TYPE)
         self.client._verify_response = mock.MagicMock()
         self.client.extensions = object()
+        self.client.auth = object()
 
         with self.assertLogs("aiocometd.client", "DEBUG") as log:
             result = await self.client._negotiate_transport()
@@ -178,6 +179,7 @@ class TestClient(TestCase):
             incoming_queue=self.client._incoming_queue,
             ssl=self.client.ssl,
             extensions=self.client.extensions,
+            auth=self.client.auth,
             loop=self.client._loop)
         transport.handshake.assert_called_with(self.client._connection_types)
         self.client._verify_response.assert_called_with(response)
@@ -206,6 +208,7 @@ class TestClient(TestCase):
         self.client._pick_connection_type = \
             mock.MagicMock(return_value=None)
         self.client.extensions = object()
+        self.client.auth = object()
 
         with self.assertRaises(ClientError,
                                msg="None of the connection types offered "
@@ -219,6 +222,7 @@ class TestClient(TestCase):
             incoming_queue=self.client._incoming_queue,
             ssl=self.client.ssl,
             extensions=self.client.extensions,
+            auth=self.client.auth,
             loop=self.client._loop)
         transport.handshake.assert_called_with(self.client._connection_types)
         self.client._pick_connection_type.assert_called_with(
@@ -252,6 +256,7 @@ class TestClient(TestCase):
             mock.MagicMock(return_value=non_default_type)
         self.client._verify_response = mock.MagicMock()
         self.client.extensions = object()
+        self.client.auth = object()
 
         with self.assertLogs("aiocometd.client", "DEBUG") as log:
             result = await self.client._negotiate_transport()
@@ -265,6 +270,7 @@ class TestClient(TestCase):
                     incoming_queue=self.client._incoming_queue,
                     ssl=self.client.ssl,
                     extensions=self.client.extensions,
+                    auth=self.client.auth,
                     loop=self.client._loop),
                 mock.call(
                     non_default_type,
@@ -273,6 +279,7 @@ class TestClient(TestCase):
                     client_id=transport1.client_id,
                     ssl=self.client.ssl,
                     extensions=self.client.extensions,
+                    auth=self.client.auth,
                     loop=self.client._loop)
             ]
         )

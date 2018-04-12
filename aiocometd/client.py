@@ -30,7 +30,7 @@ class Client:
 
     def __init__(self, endpoint, connection_types=None, *,
                  connection_timeout=10.0, ssl=None, prefetch_size=0,
-                 extensions=None, loop=None):
+                 extensions=None, auth=None, loop=None):
         """
         :param str endpoint: CometD service url
         :param connection_types: List of connection types in order of \
@@ -54,6 +54,7 @@ class Client:
         If it is less than or equal to zero, the size is infinite.
         :param extensions: List of protocol extension objects
         :type extensions: list[Extension] or None
+        :param AuthExtension auth: An auth extension
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -88,6 +89,8 @@ class Client:
         self._prefetch_size = prefetch_size
         #: List of protocol extension objects
         self.extensions = extensions
+        #: An auth extension
+        self.auth = auth
 
     def __repr__(self):
         """Formal string representation"""
@@ -167,6 +170,7 @@ class Client:
                                      incoming_queue=self._incoming_queue,
                                      ssl=self.ssl,
                                      extensions=self.extensions,
+                                     auth=self.auth,
                                      loop=self._loop)
 
         try:
@@ -194,6 +198,7 @@ class Client:
                     client_id=client_id,
                     ssl=self.ssl,
                     extensions=self.extensions,
+                    auth=self.auth,
                     loop=self._loop)
             logger.debug("Picked connection type: {!r}"
                          .format(connection_type.value))

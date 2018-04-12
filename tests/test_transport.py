@@ -7,7 +7,7 @@ from aiocometd.transport import LongPollingTransport, TransportState, \
     _TransportBase, _WebSocket, WebSocketTransport, register_transport, \
     transport_classes, create_transport, ConnectionType
 from aiocometd.exceptions import TransportError, TransportInvalidOperation
-from aiocometd.extension import Extension
+from aiocometd.extension import Extension, AuthExtension
 
 
 class TransportBase(_TransportBase):
@@ -513,6 +513,19 @@ class TestTransportBase(TestCase):
                                                                 message)
         self.transport._consume_message.assert_not_called()
 
+    async def test_process_incoming_payload(self):
+        extension = mock.create_autospec(spec=Extension)
+        auth = mock.create_autospec(spec=AuthExtension)
+        self.transport._extensions = [extension]
+        self.transport._auth = auth
+        payload = object()
+        headers = object()
+
+        await self.transport._process_incoming_payload(payload, headers)
+
+        extension.incoming.assert_called_with(payload, headers)
+        auth.incoming.assert_called_with(payload, headers)
+
     async def test_consume_payload_matching_without_advice_extension(self):
         payload = [
             {
@@ -526,9 +539,8 @@ class TestTransportBase(TestCase):
         self.transport._is_matching_response = \
             mock.MagicMock(return_value=True)
         self.transport._consume_message = mock.MagicMock()
-        extension = mock.create_autospec(spec=Extension)
+        self.transport._process_incoming_payload = mock.CoroutineMock()
         headers = object()
-        self.transport._extensions = [extension]
 
         result = await self.transport._consume_payload(
             payload, headers=headers, find_response_for=message)
@@ -539,7 +551,8 @@ class TestTransportBase(TestCase):
         self.transport._is_matching_response.assert_called_with(payload[0],
                                                                 message)
         self.transport._consume_message.assert_not_called()
-        extension.incoming.assert_called_with(payload, headers)
+        self.transport._process_incoming_payload.assert_called_with(payload,
+                                                                    headers)
 
     async def test_consume_payload_matching_with_advice(self):
         payload = [
@@ -555,6 +568,7 @@ class TestTransportBase(TestCase):
         self.transport._is_matching_response = \
             mock.MagicMock(return_value=True)
         self.transport._consume_message = mock.MagicMock()
+        self.transport._process_incoming_payload = mock.CoroutineMock()
 
         result = await self.transport._consume_payload(
             payload, find_response_for=message)
@@ -566,6 +580,8 @@ class TestTransportBase(TestCase):
         self.transport._is_matching_response.assert_called_with(payload[0],
                                                                 message)
         self.transport._consume_message.assert_not_called()
+        self.transport._process_incoming_payload.assert_called_with(payload,
+                                                                    None)
 
     async def test_consume_payload_non_matching(self):
         payload = [
@@ -580,6 +596,7 @@ class TestTransportBase(TestCase):
         self.transport._is_matching_response = \
             mock.MagicMock(return_value=False)
         self.transport._consume_message = mock.MagicMock()
+        self.transport._process_incoming_payload = mock.CoroutineMock()
 
         result = await self.transport._consume_payload(
             payload, find_response_for=message)
@@ -590,6 +607,8 @@ class TestTransportBase(TestCase):
         self.transport._is_matching_response.assert_called_with(payload[0],
                                                                 message)
         self.transport._consume_message.assert_called_with(payload[0])
+        self.transport._process_incoming_payload.assert_called_with(payload,
+                                                                    None)
 
     def test_enqueu_message(self):
         self.transport.incoming_queue = mock.MagicMock()
@@ -631,7 +650,7 @@ class TestTransportBase(TestCase):
             "id": "1"
         }
         response = object()
-        self.transport._send_payload = \
+        self.transport._send_payload_with_auth = \
             mock.CoroutineMock(return_value=response)
 
         result = await self.transport._send_message(message,
@@ -639,7 +658,7 @@ class TestTransportBase(TestCase):
 
         self.assertIs(result, response)
         self.assertEqual(message["field"], "value")
-        self.transport._send_payload.assert_called_with([message])
+        self.transport._send_payload_with_auth.assert_called_with([message])
 
     @mock.patch("aiocometd.transport.asyncio.sleep")
     async def test_handshake(self, sleep):
@@ -728,14 +747,14 @@ class TestTransportBase(TestCase):
             "advice": {"interval": 0, "reconnect": "retry"},
             "id": "2"
         }
-        self.transport._send_payload = \
+        self.transport._send_payload_with_auth = \
             mock.CoroutineMock(return_value=response)
 
         result = await self.transport._connect()
 
         self.assertEqual(result, response)
         sleep.assert_not_called()
-        self.transport._send_payload.assert_called_with(
+        self.transport._send_payload_with_auth.assert_called_with(
             [self.transport._CONNECT_MESSAGE])
         self.assertFalse(self.transport._subscribe_on_connect)
 
@@ -748,14 +767,14 @@ class TestTransportBase(TestCase):
             "advice": {"interval": 0, "reconnect": "retry"},
             "id": "2"
         }
-        self.transport._send_payload = \
+        self.transport._send_payload_with_auth = \
             mock.CoroutineMock(return_value=response)
 
         result = await self.transport._connect(5)
 
         self.assertEqual(result, response)
         sleep.assert_called_with(5, loop=self.transport._loop)
-        self.transport._send_payload.assert_called_with(
+        self.transport._send_payload_with_auth.assert_called_with(
             [self.transport._CONNECT_MESSAGE])
         self.assertFalse(self.transport._subscribe_on_connect)
 
@@ -773,13 +792,13 @@ class TestTransportBase(TestCase):
             message = self.transport._SUBSCRIBE_MESSAGE.copy()
             message["subscription"] = subscription
             additional_messages.append(message)
-        self.transport._send_payload = \
+        self.transport._send_payload_with_auth = \
             mock.CoroutineMock(return_value=response)
 
         result = await self.transport._connect()
 
         self.assertEqual(result, response)
-        self.transport._send_payload.assert_called_with(
+        self.transport._send_payload_with_auth.assert_called_with(
             [self.transport._CONNECT_MESSAGE] + additional_messages)
         self.assertFalse(self.transport._subscribe_on_connect)
 
@@ -797,13 +816,13 @@ class TestTransportBase(TestCase):
             message = self.transport._SUBSCRIBE_MESSAGE.copy()
             message["subscription"] = subscription
             additional_messages.append(message)
-        self.transport._send_payload = \
+        self.transport._send_payload_with_auth = \
             mock.CoroutineMock(return_value=response)
 
         result = await self.transport._connect()
 
         self.assertEqual(result, response)
-        self.transport._send_payload.assert_called_with(
+        self.transport._send_payload_with_auth.assert_called_with(
             [self.transport._CONNECT_MESSAGE] + additional_messages)
         self.assertTrue(self.transport._subscribe_on_connect)
 
@@ -1192,8 +1211,7 @@ class TestTransportBase(TestCase):
         self.transport._send_final_payload = mock.CoroutineMock(
             return_value=response
         )
-        extension = mock.create_autospec(spec=Extension)
-        self.transport._extensions = [extension]
+        self.transport._process_outgoing_payload = mock.CoroutineMock()
 
         result = await self.transport._send_payload(payload)
 
@@ -1201,7 +1219,117 @@ class TestTransportBase(TestCase):
         self.transport._finalize_payload.assert_called_with(payload)
         self.transport._send_final_payload.assert_called_with(payload,
                                                               headers={})
-        extension.outgoing.assert_called_with(payload, {})
+        self.transport._process_outgoing_payload.assert_called_with(payload,
+                                                                    {})
+
+    async def test_process_outgoing_payload(self):
+        extension = mock.create_autospec(spec=Extension)
+        auth = mock.create_autospec(spec=AuthExtension)
+        self.transport._extensions = [extension]
+        self.transport._auth = auth
+        payload = object()
+        headers = object()
+
+        await self.transport._process_outgoing_payload(payload, headers)
+
+        extension.outgoing.assert_called_with(payload, headers)
+        auth.outgoing.assert_called_with(payload, headers)
+
+    @mock.patch("aiocometd.transport.get_error_code")
+    def test_is_auth_error_message(self, get_error_code):
+        response = {
+            "error": "error"
+        }
+        get_error_code.return_value = 401
+
+        result = self.transport._is_auth_error_message(response)
+
+        self.assertTrue(result)
+        get_error_code.assert_called_with(response["error"])
+
+    @mock.patch("aiocometd.transport.get_error_code")
+    def test_is_auth_error_message_forbidden(self, get_error_code):
+        response = {
+            "error": "error"
+        }
+        get_error_code.return_value = 403
+
+        result = self.transport._is_auth_error_message(response)
+
+        self.assertTrue(result)
+        get_error_code.assert_called_with(response["error"])
+
+    @mock.patch("aiocometd.transport.get_error_code")
+    def test_is_auth_error_message_not_an_auth_error(self, get_error_code):
+        response = {
+            "error": "error"
+        }
+        get_error_code.return_value = 400
+
+        result = self.transport._is_auth_error_message(response)
+
+        self.assertFalse(result)
+        get_error_code.assert_called_with(response["error"])
+
+    @mock.patch("aiocometd.transport.get_error_code")
+    def test_is_auth_error_message_not_an_error(self, get_error_code):
+        response = {}
+        get_error_code.return_value = None
+
+        result = self.transport._is_auth_error_message(response)
+
+        self.assertFalse(result)
+        get_error_code.assert_called_with(None)
+
+    async def test_send_payload_with_auth(self):
+        response = object()
+        payload = object()
+        self.transport._send_payload = mock.CoroutineMock(
+            return_value=response)
+        self.transport._auth = None
+        self.transport._is_auth_error_message = mock.MagicMock(
+            return_value=False)
+
+        result = await self.transport._send_payload_with_auth(payload)
+
+        self.assertIs(result, response)
+        self.transport._send_payload.assert_called_with(payload)
+        self.transport._is_auth_error_message.assert_not_called()
+
+    async def test_send_payload_with_auth_with_extension(self):
+        response = object()
+        payload = object()
+        self.transport._send_payload = mock.CoroutineMock(
+            return_value=response)
+        self.transport._auth = mock.create_autospec(spec=AuthExtension)
+        self.transport._is_auth_error_message = mock.MagicMock(
+            return_value=False)
+
+        result = await self.transport._send_payload_with_auth(payload)
+
+        self.assertIs(result, response)
+        self.transport._send_payload.assert_called_with(payload)
+        self.transport._is_auth_error_message.assert_called_with(response)
+        self.transport._auth.authenticate.assert_not_called()
+
+    async def test_send_payload_with_auth_with_extension_error(self):
+        response = object()
+        response2 = object()
+        payload = object()
+        self.transport._send_payload = mock.CoroutineMock(
+            side_effect=[response, response2])
+        self.transport._auth = mock.create_autospec(spec=AuthExtension)
+        self.transport._is_auth_error_message = mock.MagicMock(
+            return_value=True)
+
+        result = await self.transport._send_payload_with_auth(payload)
+
+        self.assertIs(result, response2)
+        self.transport._send_payload.assert_has_calls([
+            mock.call(payload), mock.call(payload)
+        ])
+        self.transport._is_auth_error_message.assert_called_with(response)
+        self.transport._auth.authenticate.assert_called()
 
 
 class TestLongPollingTransport(TestCase):
@@ -1214,7 +1342,7 @@ class TestLongPollingTransport(TestCase):
         self.assertEqual(self.transport.connection_type,
                          ConnectionType.LONG_POLLING)
 
-    async def test_send_payload(self):
+    async def test_send_payload_final_payload(self):
         resp_data = [{
             "channel": "test/channel3",
             "data": {},
@@ -1249,7 +1377,7 @@ class TestLongPollingTransport(TestCase):
             headers=response_mock.headers,
             find_response_for=payload[0])
 
-    async def test_send_payload_client_error(self):
+    async def test_send_payload_final_payload_client_error(self):
         resp_data = [{
             "channel": "test/channel3",
             "data": {},

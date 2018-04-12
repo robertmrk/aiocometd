@@ -24,3 +24,15 @@ class Extension(ABC):
         :param headers: Headers to send
         :type headers: dict or None
         """
+
+
+class AuthExtension(Extension):
+    """Extension with support for authentication"""
+    async def authenticate(self):
+        """Called after a failed authentication attempt
+
+        For authentication schemes where the credentials are static it doesn't
+        makes much sense to reimplement this function. However for schemes
+        where the credentials can expire (like OAuth, JWT...) this method can
+        be reimplemented to update those credentials
+        """
