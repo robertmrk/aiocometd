@@ -11,7 +11,7 @@ from .exceptions import TransportError, TransportInvalidOperation
 from .utils import get_error_code
 
 
-logger = logging.getLogger(__name__)
+LOGGER = logging.getLogger(__name__)
 
 
 @unique
@@ -693,7 +693,7 @@ class _TransportBase(Transport):
         try:
             self.incoming_queue.put_nowait(message)
         except asyncio.QueueFull:
-            logger.debug("Incoming message queue is full, "
+            LOGGER.debug("Incoming message queue is full, "
                          "dropping message.")
 
     def _start_connect_task(self, coro):
@@ -787,7 +787,7 @@ class _TransportBase(Transport):
                 self._connected_event.clear()
 
         log_fmt = "Connect task finished with: {!r}"
-        logger.debug(log_fmt.format(result))
+        LOGGER.debug(log_fmt.format(result))
 
         if self.state != TransportState.DISCONNECTING:
             self._follow_advice(reconnect_timeout)
@@ -815,7 +815,7 @@ class _TransportBase(Transport):
         # there is not reconnect advice from the server or its value
         # is none
         else:
-            logger.debug("No reconnect advice provided, no more operations "
+            LOGGER.debug("No reconnect advice provided, no more operations "
                          "will be scheduled.")
             # if there is a finished connect taks enqueue its result
             # since it's a server error that should be handled by the
@@ -910,7 +910,7 @@ class LongPollingTransport(_TransportBase):
             response_payload = await response.json()
             headers = response.headers
         except aiohttp.client_exceptions.ClientError as error:
-            logger.debug("Failed to send payload, {}".format(error))
+            LOGGER.debug("Failed to send payload, {}".format(error))
             raise TransportError(str(error)) from error
         return await self._consume_payload(response_payload, headers=headers,
                                            find_response_for=payload[0])
@@ -1046,7 +1046,7 @@ class WebSocketTransport(_TransportBase):
                 return await self._send_socket_payload(socket, payload)
 
         except aiohttp.client_exceptions.ClientError as error:
-            logger.debug("Failed to send payload, {}".format(error))
+            LOGGER.debug("Failed to send payload, {}".format(error))
             raise TransportError(str(error)) from error
 
     async def _send_socket_payload(self, socket, payload):

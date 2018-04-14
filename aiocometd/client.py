@@ -11,7 +11,7 @@ from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
     TransportTimeoutError, ClientError
 
 
-logger = logging.getLogger(__name__)
+LOGGER = logging.getLogger(__name__)
 
 
 class Client:
@@ -70,7 +70,7 @@ class Client:
             self._connection_types = list(connection_types)
         else:
             self._connection_types = self._DEFAULT_CONNECTION_TYPES
-        logger.debug("Created client with connection_types: {!r}"
+        LOGGER.debug("Created client with connection_types: {!r}"
                      .format([t.value for t in self._connection_types]))
         #: event loop used to schedule tasks
         self._loop = loop or asyncio.get_event_loop()
@@ -177,7 +177,7 @@ class Client:
             response = await transport.handshake(self._connection_types)
             self._verify_response(response)
 
-            logger.debug(
+            LOGGER.debug(
                 "Connection types supported by the server: {!r}"
                 .format(response["supportedConnectionTypes"])
             )
@@ -200,7 +200,7 @@ class Client:
                     extensions=self.extensions,
                     auth=self.auth,
                     loop=self._loop)
-            logger.debug("Picked connection type: {!r}"
+            LOGGER.debug("Picked connection type: {!r}"
                          .format(connection_type.value))
             return transport
         except Exception:
@@ -242,7 +242,7 @@ class Client:
         # after a certain timeout. The important thing is that we did our
         # best to notify the server.
         except TransportError as error:
-            logger.debug("Disconnect request failed, {}".format(error))
+            LOGGER.debug("Disconnect request failed, {}".format(error))
         finally:
             if self._transport:
                 await self._transport.close()
