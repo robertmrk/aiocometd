@@ -7,7 +7,8 @@ from asynctest import TestCase, mock
 from aiocometd.client import Client
 from aiocometd.exceptions import ServerError, ClientInvalidOperation, \
     TransportError, TransportTimeoutError, ClientError
-from aiocometd.transport import DEFAULT_CONNECTION_TYPE, ConnectionType
+from aiocometd.transport import DEFAULT_CONNECTION_TYPE, ConnectionType, \
+    MetaChannel, SERVICE_CHANNEL_PREFIX
 
 
 @unique
@@ -414,7 +415,7 @@ class TestClient(TestCase):
 
     async def test_subscribe(self):
         response = {
-            "channel": "/meta/subscribe",
+            "channel": MetaChannel.SUBSCRIBE,
             "successful": True,
             "subscription": "channel1",
             "id": "1"
@@ -443,7 +444,7 @@ class TestClient(TestCase):
 
     async def test_subscribe_error(self):
         response = {
-            "channel": "/meta/subscribe",
+            "channel": MetaChannel.SUBSCRIBE,
             "successful": False,
             "subscription": "channel1",
             "id": "1"
@@ -462,7 +463,7 @@ class TestClient(TestCase):
 
     async def test_unsubscribe(self):
         response = {
-            "channel": "/meta/unsubscribe",
+            "channel": MetaChannel.UNSUBSCRIBE,
             "successful": True,
             "subscription": "channel1",
             "id": "1"
@@ -491,7 +492,7 @@ class TestClient(TestCase):
 
     async def test_unsubscribe_error(self):
         response = {
-            "channel": "/meta/unsubscribe",
+            "channel": MetaChannel.UNSUBSCRIBE,
             "successful": False,
             "subscription": "channel1",
             "id": "1"
@@ -605,7 +606,7 @@ class TestClient(TestCase):
 
     def test_raise_server_error_meta(self):
         response = {
-            "channel": "/meta/subscribe",
+            "channel": MetaChannel.SUBSCRIBE,
             "successful": False,
             "id": "1"
         }
@@ -617,7 +618,7 @@ class TestClient(TestCase):
 
     def test_raise_server_error_service(self):
         response = {
-            "channel": "/service/test",
+            "channel": SERVICE_CHANNEL_PREFIX + "test",
             "successful": False,
             "id": "1"
         }

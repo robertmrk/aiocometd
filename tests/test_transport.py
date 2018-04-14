@@ -5,7 +5,8 @@ from aiohttp import ClientSession, client_exceptions, WSMsgType
 
 from aiocometd.transport import LongPollingTransport, TransportState, \
     _TransportBase, _WebSocket, WebSocketTransport, register_transport, \
-    transport_classes, create_transport, ConnectionType
+    transport_classes, create_transport, ConnectionType, MetaChannel, \
+    SERVICE_CHANNEL_PREFIX
 from aiocometd.exceptions import TransportError, TransportInvalidOperation, \
     TransportConnectionClosed
 from aiocometd.extension import Extension, AuthExtension
@@ -265,12 +266,12 @@ class TestTransportBase(TestCase):
         self.assertEqual(result, expected_result)
 
     def test_is_server_error_message_subscribe(self):
-        channel = "/meta/subscribe"
+        channel = MetaChannel.SUBSCRIBE
         self.assert_server_error_message_for_channel(channel, False, True)
         self.assert_server_error_message_for_channel(channel, True, False)
 
     def test_is_server_error_message_unsubscribe(self):
-        channel = "/meta/unsubscribe"
+        channel = MetaChannel.UNSUBSCRIBE
         self.assert_server_error_message_for_channel(channel, False, True)
         self.assert_server_error_message_for_channel(channel, True, False)
 
@@ -280,22 +281,22 @@ class TestTransportBase(TestCase):
         self.assert_server_error_message_for_channel(channel, True, False)
 
     def test_is_server_error_message_service_channel(self):
-        channel = "/service/test"
+        channel = SERVICE_CHANNEL_PREFIX + "test"
         self.assert_server_error_message_for_channel(channel, False, True)
         self.assert_server_error_message_for_channel(channel, True, False)
 
     def test_is_server_error_message_handshake(self):
-        channel = "/meta/handshake"
+        channel = MetaChannel.HANDSHAKE
         self.assert_server_error_message_for_channel(channel, False, False)
         self.assert_server_error_message_for_channel(channel, True, False)
 
     def test_is_server_error_message_connect(self):
-        channel = "/meta/connect"
+        channel = MetaChannel.CONNECT
         self.assert_server_error_message_for_channel(channel, False, False)
         self.assert_server_error_message_for_channel(channel, True, False)
 
     def test_is_server_error_message_disconnect(self):
-        channel = "/meta/disconnect"
+        channel = MetaChannel.DISCONNECT
         self.assert_server_error_message_for_channel(channel, False, False)
         self.assert_server_error_message_for_channel(channel, True, False)
 
@@ -310,12 +311,12 @@ class TestTransportBase(TestCase):
         self.assertEqual(result, expected_result)
 
     def test_is_event_message_subscribe(self):
-        channel = "/meta/subscribe"
+        channel = MetaChannel.SUBSCRIBE
         self.assert_event_message_for_channel(channel, False, False)
         self.assert_event_message_for_channel(channel, True, False)
 
     def test_is_event_message_unsubscribe(self):
-        channel = "/meta/unsubscribe"
+        channel = MetaChannel.UNSUBSCRIBE
         self.assert_event_message_for_channel(channel, False, False)
         self.assert_event_message_for_channel(channel, True, False)
 
@@ -325,22 +326,22 @@ class TestTransportBase(TestCase):
         self.assert_event_message_for_channel(channel, True, True)
 
     def test_is_event_message_service_channel(self):
-        channel = "/service/test"
+        channel = SERVICE_CHANNEL_PREFIX + "test"
         self.assert_event_message_for_channel(channel, False, False)
         self.assert_event_message_for_channel(channel, True, False)
 
     def test_is_event_message_handshake(self):
-        channel = "/meta/handshake"
+        channel = MetaChannel.HANDSHAKE
         self.assert_event_message_for_channel(channel, False, False)
         self.assert_event_message_for_channel(channel, True, False)
 
     def test_is_event_message_connect(self):
-        channel = "/meta/connect"
+        channel = MetaChannel.CONNECT
         self.assert_event_message_for_channel(channel, False, False)
         self.assert_event_message_for_channel(channel, True, False)
 
     def test_is_event_message_disconnect(self):
-        channel = "/meta/disconnect"
+        channel = MetaChannel.DISCONNECT
         self.assert_event_message_for_channel(channel, False, False)
         self.assert_event_message_for_channel(channel, True, False)
 
@@ -385,7 +386,7 @@ class TestTransportBase(TestCase):
 
     def test_update_subscriptions_new_subscription_success(self):
         response_message = {
-            "channel": "/meta/subscribe",
+            "channel": MetaChannel.SUBSCRIBE,
             "subscription": "/test/channel1",
             "successful": True,
             "id": "3"
@@ -399,7 +400,7 @@ class TestTransportBase(TestCase):
 
     def test_update_subscriptions_existing_subscription_success(self):
         response_message = {
-            "channel": "/meta/subscribe",
+            "channel": MetaChannel.SUBSCRIBE,
             "subscription": "/test/channel1",
             "successful": True,
             "id": "3"
@@ -413,7 +414,7 @@ class TestTransportBase(TestCase):
 
     def test_update_subscriptions_new_subscription_fail(self):
         response_message = {
-            "channel": "/meta/subscribe",
+            "channel": MetaChannel.SUBSCRIBE,
             "subscription": "/test/channel1",
             "successful": False,
             "id": "3"
@@ -426,7 +427,7 @@ class TestTransportBase(TestCase):
 
     def test_update_subscriptions_existing_subscription_fail(self):
         response_message = {
-            "channel": "/meta/subscribe",
+            "channel": MetaChannel.SUBSCRIBE,
             "subscription": "/test/channel1",
             "successful": False,
             "id": "3"
@@ -439,7 +440,7 @@ class TestTransportBase(TestCase):
 
     def test_update_subscriptions_new_unsubscription_success(self):
         response_message = {
-            "channel": "/meta/unsubscribe",
+            "channel": MetaChannel.UNSUBSCRIBE,
             "subscription": "/test/channel1",
             "successful": True,
             "id": "3"
@@ -452,7 +453,7 @@ class TestTransportBase(TestCase):
 
     def test_update_subscriptions_existing_unsubscription_success(self):
         response_message = {
-            "channel": "/meta/unsubscribe",
+            "channel": MetaChannel.UNSUBSCRIBE,
             "subscription": "/test/channel1",
             "successful": True,
             "id": "3"
@@ -465,7 +466,7 @@ class TestTransportBase(TestCase):
 
     def test_update_subscriptions_new_unsubscription_fail(self):
         response_message = {
-            "channel": "/meta/unsubscribe",
+            "channel": MetaChannel.UNSUBSCRIBE,
             "subscription": "/test/channel1",
             "successful": False,
             "id": "3"
@@ -478,7 +479,7 @@ class TestTransportBase(TestCase):
 
     def test_update_subscriptions_existing_unsubscription_fail(self):
         response_message = {
-            "channel": "/meta/unsubscribe",
+            "channel": MetaChannel.UNSUBSCRIBE,
             "subscription": "/test/channel1",
             "successful": False,
             "id": "3"
@@ -493,7 +494,7 @@ class TestTransportBase(TestCase):
     async def test_consume_payload_matching_without_advice(self):
         payload = [
             {
-                "channel": "/meta/connect",
+                "channel": MetaChannel.CONNECT,
                 "successful": True,
                 "id": "1"
             }
@@ -530,7 +531,7 @@ class TestTransportBase(TestCase):
     async def test_consume_payload_matching_without_advice_extension(self):
         payload = [
             {
-                "channel": "/meta/connect",
+                "channel": MetaChannel.CONNECT,
                 "successful": True,
                 "id": "1"
             }
@@ -558,7 +559,7 @@ class TestTransportBase(TestCase):
     async def test_consume_payload_matching_with_advice(self):
         payload = [
             {
-                "channel": "/meta/connect",
+                "channel": MetaChannel.CONNECT,
                 "successful": True,
                 "advice": {"interval": 0, "reconnect": "retry"},
                 "id": "1"
@@ -587,7 +588,7 @@ class TestTransportBase(TestCase):
     async def test_consume_payload_non_matching(self):
         payload = [
             {
-                "channel": "/meta/connect",
+                "channel": MetaChannel.CONNECT,
                 "successful": True,
                 "id": "1"
             }
@@ -671,7 +672,7 @@ class TestTransportBase(TestCase):
         self.transport._send_message = \
             mock.CoroutineMock(return_value=response)
         message = {
-            "channel": "/meta/handshake",
+            "channel": MetaChannel.HANDSHAKE,
             "version": "1.0",
             "supportedConnectionTypes": None,
             "minimumVersion": "1.0",
@@ -701,7 +702,7 @@ class TestTransportBase(TestCase):
         self.transport._send_message = \
             mock.CoroutineMock(return_value=response)
         message = {
-            "channel": "/meta/handshake",
+            "channel": MetaChannel.HANDSHAKE,
             "version": "1.0",
             "supportedConnectionTypes": None,
             "minimumVersion": "1.0",
@@ -743,7 +744,7 @@ class TestTransportBase(TestCase):
     async def test__connect(self, sleep):
         self.transport._subscribe_on_connect = False
         response = {
-            "channel": "/meta/connect",
+            "channel": MetaChannel.CONNECT,
             "successful": True,
             "advice": {"interval": 0, "reconnect": "retry"},
             "id": "2"
@@ -763,7 +764,7 @@ class TestTransportBase(TestCase):
     async def test__connect_with_delay(self, sleep):
         self.transport._subscribe_on_connect = False
         response = {
-            "channel": "/meta/connect",
+            "channel": MetaChannel.CONNECT,
             "successful": True,
             "advice": {"interval": 0, "reconnect": "retry"},
             "id": "2"
@@ -783,7 +784,7 @@ class TestTransportBase(TestCase):
         self.transport._subscribe_on_connect = True
         self.transport._subscriptions = {"/test/channel1", "/test/channel2"}
         response = {
-            "channel": "/meta/connect",
+            "channel": MetaChannel.CONNECT,
             "successful": True,
             "advice": {"interval": 0, "reconnect": "retry"},
             "id": "2"
@@ -807,7 +808,7 @@ class TestTransportBase(TestCase):
         self.transport._subscribe_on_connect = True
         self.transport._subscriptions = {"/test/channel1", "/test/channel2"}
         response = {
-            "channel": "/meta/connect",
+            "channel": MetaChannel.CONNECT,
             "successful": False,
             "advice": {"interval": 0, "reconnect": "retry"},
             "id": "2"
@@ -887,7 +888,7 @@ class TestTransportBase(TestCase):
     async def test_connect_error_on_invalid_state(self):
         self.transport._client_id = "id"
         response = {
-            "channel": "/meta/connect",
+            "channel": MetaChannel.CONNECT,
             "successful": True,
             "advice": {"interval": 0, "reconnect": "retry"},
             "id": "2"
@@ -912,7 +913,7 @@ class TestTransportBase(TestCase):
     async def test_connect(self):
         self.transport._client_id = "id"
         response = {
-            "channel": "/meta/connect",
+            "channel": MetaChannel.CONNECT,
             "successful": True,
             "advice": {"interval": 0, "reconnect": "retry"},
             "id": "2"
@@ -1547,7 +1548,7 @@ class TestWebSocketTransport(TestCase):
         self.transport._websocket.get_socket.assert_called_with(headers)
 
     async def test_get_socket_for_long_duration_request(self):
-        channel = "/meta/connect"
+        channel = MetaChannel.CONNECT
         self.assertIn(channel, self.transport._connect_task_channels)
         expected_socket = object()
         self.transport._connect_websocket = mock.MagicMock()
@@ -1573,7 +1574,7 @@ class TestWebSocketTransport(TestCase):
         self.assertIs(result, expected_lock)
 
     def test_get_lock_for_long_duration_request(self):
-        channel = "/meta/connect"
+        channel = MetaChannel.CONNECT
         self.assertIn(channel, self.transport._connect_task_channels)
         expected_lock = object()
         self.transport._connect_websocket_lock = expected_lock

@@ -6,7 +6,7 @@ from collections import abc
 from contextlib import suppress
 
 from .transport import create_transport, DEFAULT_CONNECTION_TYPE, \
-    ConnectionType
+    ConnectionType, MetaChannel, SERVICE_CHANNEL_PREFIX
 from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
     TransportTimeoutError, ClientError
 
@@ -18,11 +18,11 @@ class Client:
     """CometD client"""
     #: Predefined server error messages by channel name
     _SERVER_ERROR_MESSAGES = {
-        "/meta/handshake": "Handshake request failed.",
-        "/meta/connect": "Connect request failed.",
-        "/meta/disconnect": "Disconnect request failed.",
-        "/meta/subscribe": "Subscribe request failed.",
-        "/meta/unsubscribe": "Unsubscribe request failed."
+        MetaChannel.HANDSHAKE: "Handshake request failed.",
+        MetaChannel.CONNECT: "Connect request failed.",
+        MetaChannel.DISCONNECT: "Disconnect request failed.",
+        MetaChannel.SUBSCRIBE: "Subscribe request failed.",
+        MetaChannel.UNSUBSCRIBE: "Unsubscribe request failed."
     }
     #: Defualt connection types list
     _DEFAULT_CONNECTION_TYPES = [ConnectionType.WEBSOCKET,
@@ -322,7 +322,7 @@ class Client:
         channel = response["channel"]
         message = type(self)._SERVER_ERROR_MESSAGES.get(channel)
         if not message:
-            if channel.startswith("/service/"):
+            if channel.startswith(SERVICE_CHANNEL_PREFIX):
                 message = "Service request failed."
             else:
                 message = "Publish request failed."

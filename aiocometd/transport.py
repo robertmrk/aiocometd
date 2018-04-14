@@ -24,6 +24,27 @@ class ConnectionType(Enum):
     WEBSOCKET = "websocket"
 
 
+#: CometD meta channel prefix
+META_CHANNEL_PREFIX = "/meta/"
+#: CometD service channel prefix
+SERVICE_CHANNEL_PREFIX = "/service/"
+
+
+@unique
+class MetaChannel(str, Enum):
+    """CometD meta channel names"""
+    #: Handshake meta channel
+    HANDSHAKE = META_CHANNEL_PREFIX + "handshake"
+    #: Connect meta channel
+    CONNECT = META_CHANNEL_PREFIX + "connect"
+    #: Disconnect meta channel
+    DISCONNECT = META_CHANNEL_PREFIX + "disconnect"
+    #: Subscribe meta channel
+    SUBSCRIBE = META_CHANNEL_PREFIX + "subscribe"
+    #: Unsubscribe meta channel
+    UNSUBSCRIBE = META_CHANNEL_PREFIX + "unsubscribe"
+
+
 DEFAULT_CONNECTION_TYPE = ConnectionType.LONG_POLLING
 transport_classes = {}
 
@@ -206,7 +227,7 @@ class _TransportBase(Transport):
     #: Handshake message template
     _HANDSHAKE_MESSAGE = {
         # mandatory
-        "channel": "/meta/handshake",
+        "channel": MetaChannel.HANDSHAKE,
         "version": "1.0",
         "supportedConnectionTypes": None,
         # optional
@@ -216,7 +237,7 @@ class _TransportBase(Transport):
     #: Connect message template
     _CONNECT_MESSAGE = {
         # mandatory
-        "channel": "/meta/connect",
+        "channel": MetaChannel.CONNECT,
         "clientId": None,
         "connectionType": None,
         # optional
@@ -225,7 +246,7 @@ class _TransportBase(Transport):
     #: Disconnect message template
     _DISCONNECT_MESSAGE = {
         # mandatory
-        "channel": "/meta/disconnect",
+        "channel": MetaChannel.DISCONNECT,
         "clientId": None,
         # optional
         "id": None
@@ -233,7 +254,7 @@ class _TransportBase(Transport):
     #: Subscribe message template
     _SUBSCRIBE_MESSAGE = {
         # mandatory
-        "channel": "/meta/subscribe",
+        "channel": MetaChannel.SUBSCRIBE,
         "clientId": None,
         "subscription": None,
         # optional
@@ -242,7 +263,7 @@ class _TransportBase(Transport):
     #: Unsubscribe message template
     _UNSUBSCRIBE_MESSAGE = {
         # mandatory
-        "channel": "/meta/unsubscribe",
+        "channel": MetaChannel.UNSUBSCRIBE,
         "clientId": None,
         "subscription": None,
         # optional
@@ -566,9 +587,9 @@ class _TransportBase(Transport):
                  otherwise False.
         :rtype: bool
         """
-        return (response_message["channel"] != "/meta/connect" and
-                response_message["channel"] != "/meta/disconnect" and
-                response_message["channel"] != "/meta/handshake" and
+        return (response_message["channel"] not in [MetaChannel.CONNECT,
+                                                    MetaChannel.DISCONNECT,
+                                                    MetaChannel.HANDSHAKE] and
                 not response_message.get("successful", True))
 
     def _is_event_message(self, response_message):
@@ -579,8 +600,9 @@ class _TransportBase(Transport):
                  otherwise False.
         :rtype: bool
         """
-        return (not response_message["channel"].startswith("/meta/") and
-                not response_message["channel"].startswith("/service/") and
+        channel = response_message["channel"]
+        return (not channel.startswith(META_CHANNEL_PREFIX) and
+                not channel.startswith(SERVICE_CHANNEL_PREFIX) and
                 "data" in response_message)
 
     def _is_auth_error_message(self, response_message):
@@ -617,7 +639,7 @@ class _TransportBase(Transport):
         """
         # if a subscription response is successful, then add the channel
         # to the set of subscriptions, if it fails, then remove it
-        if response_message["channel"] == "/meta/subscribe":
+        if response_message["channel"] == MetaChannel.SUBSCRIBE:
             if (response_message["successful"] and
                     response_message["subscription"]
                     not in self._subscriptions):
@@ -628,7 +650,7 @@ class _TransportBase(Transport):
 
         # if an unsubscribe response is successful then remove the channel
         # from the set of subscriptions
-        if response_message["channel"] == "/meta/unsubscribe":
+        if response_message["channel"] == MetaChannel.UNSUBSCRIBE:
             if (response_message["successful"] and
                     response_message["subscription"] in self._subscriptions):
                 self._subscriptions.remove(response_message["subscription"])
@@ -992,7 +1014,8 @@ class WebSocketTransport(_TransportBase):
 
         #: channels used during the connect task, requests on these channels
         #: are usually long running
-        self._connect_task_channels = ("/meta/handshake", "/meta/connect")
+        self._connect_task_channels = (MetaChannel.HANDSHAKE,
+                                       MetaChannel.CONNECT)
         #: websocket for short duration requests
         self._websocket = _WebSocket(self._get_http_session,
                                      self.endpoint, ssl=self.ssl)
