@@ -70,8 +70,8 @@ class Client:
             self._connection_types = list(connection_types)
         else:
             self._connection_types = self._DEFAULT_CONNECTION_TYPES
-        LOGGER.debug("Created client with connection_types: {!r}"
-                     .format([t.value for t in self._connection_types]))
+        LOGGER.debug("Created client with connection_types: %r",
+                     [t.value for t in self._connection_types])
         #: event loop used to schedule tasks
         self._loop = loop or asyncio.get_event_loop()
         #: queue for consuming incoming event messages
@@ -177,10 +177,8 @@ class Client:
             response = await transport.handshake(self._connection_types)
             self._verify_response(response)
 
-            LOGGER.debug(
-                "Connection types supported by the server: {!r}"
-                .format(response["supportedConnectionTypes"])
-            )
+            LOGGER.debug("Connection types supported by the server: %r",
+                         response["supportedConnectionTypes"])
             connection_type = self._pick_connection_type(
                 response["supportedConnectionTypes"]
             )
@@ -200,8 +198,7 @@ class Client:
                     extensions=self.extensions,
                     auth=self.auth,
                     loop=self._loop)
-            LOGGER.debug("Picked connection type: {!r}"
-                         .format(connection_type.value))
+            LOGGER.debug("Picked connection type: %r", connection_type.value)
             return transport
         except Exception:
             await transport.close()
@@ -242,7 +239,7 @@ class Client:
         # after a certain timeout. The important thing is that we did our
         # best to notify the server.
         except TransportError as error:
-            LOGGER.debug("Disconnect request failed, {}".format(error))
+            LOGGER.debug("Disconnect request failed, %s", error)
         finally:
             if self._transport:
                 await self._transport.close()
