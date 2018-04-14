@@ -1,10 +1,24 @@
-from unittest import TestCase
+from unittest import TestCase, mock
 
 from aiocometd.exceptions import ServerError
 
 
 class TestServerError(TestCase):
-    def test_parse_none_error_message(self):
+    def test_properties(self):
+        response = {
+            "channel": "/meta/subscription",
+            "successful": False,
+            "id": "0",
+            "error": "error"
+        }
+
+        error = ServerError("description message", response)
+
+        self.assertEqual(error.message, "description message")
+        self.assertEqual(error.response, response)
+        self.assertEqual(error.error, "error")
+
+    def test_properties_on_no_error(self):
         response = {
             "channel": "/meta/subscription",
             "successful": False,
@@ -16,57 +30,51 @@ class TestServerError(TestCase):
         self.assertEqual(error.message, "description message")
         self.assertEqual(error.response, response)
         self.assertEqual(error.error, None)
-        self.assertEqual(error.error_code, None)
-        self.assertEqual(error.error_message, None)
-        self.assertEqual(error.error_args, None)
 
-    def test_parse_invalid_error_message(self):
+    @mock.patch("aiocometd.exceptions.utils")
+    def test_error_code(self, utils):
         response = {
             "channel": "/meta/subscription",
             "successful": False,
             "id": "0",
-            "error": "invalid response"
+            "error": "error"
         }
+        utils.get_error_code.return_value = 12
 
         error = ServerError("description message", response)
+        result = error.error_code
 
-        self.assertEqual(error.message, "description message")
-        self.assertEqual(error.response, response)
-        self.assertEqual(error.error, response["error"])
-        self.assertEqual(error.error_code, None)
-        self.assertEqual(error.error_message, None)
-        self.assertEqual(error.error_args, None)
+        self.assertEqual(result, utils.get_error_code.return_value)
+        utils.get_error_code.assert_called_with(response["error"])
 
-    def test_parse_valid_error_message(self):
+    @mock.patch("aiocometd.exceptions.utils")
+    def test_error_message(self, utils):
         response = {
             "channel": "/meta/subscription",
             "successful": False,
             "id": "0",
-            "error": "403:xj3sjdsjdsjad,/foo/bar:Subscription denied"
+            "error": "error"
         }
+        utils.get_error_message.return_value = "message"
 
         error = ServerError("description message", response)
+        result = error.error_message
 
-        self.assertEqual(error.message, "description message")
-        self.assertEqual(error.response, response)
-        self.assertEqual(error.error, response["error"])
-        self.assertEqual(error.error_code, 403)
-        self.assertEqual(error.error_message, "Subscription denied")
-        self.assertEqual(error.error_args, ["xj3sjdsjdsjad", "/foo/bar"])
+        self.assertEqual(result, utils.get_error_message.return_value)
+        utils.get_error_message.assert_called_with(response["error"])
 
-    def test_parse_valid_error_message_empty_parts(self):
+    @mock.patch("aiocometd.exceptions.utils")
+    def test_error_args(self, utils):
         response = {
             "channel": "/meta/subscription",
             "successful": False,
             "id": "0",
-            "error": "::"
+            "error": "error"
         }
+        utils.get_error_args.return_value = ["arg"]
 
         error = ServerError("description message", response)
+        result = error.error_args
 
-        self.assertEqual(error.message, "description message")
-        self.assertEqual(error.response, response)
-        self.assertEqual(error.error, response["error"])
-        self.assertEqual(error.error_code, None)
-        self.assertEqual(error.error_message, "")
-        self.assertEqual(error.error_args, [])
+        self.assertEqual(result, utils.get_error_args.return_value)
+        utils.get_error_args.assert_called_with(response["error"])
