@@ -70,9 +70,6 @@ class Client:
             self._connection_types = list(connection_types)
         else:
             self._connection_types = self._DEFAULT_CONNECTION_TYPES
-        LOGGER.debug("Created client with connection_types: %r",
-                     [t.value for t in self._connection_types])
-        #: event loop used to schedule tasks
         self._loop = loop or asyncio.get_event_loop()
         #: queue for consuming incoming event messages
         self._incoming_queue = None
@@ -177,8 +174,8 @@ class Client:
             response = await transport.handshake(self._connection_types)
             self._verify_response(response)
 
-            LOGGER.debug("Connection types supported by the server: %r",
-                         response["supportedConnectionTypes"])
+            LOGGER.info("Connection types supported by the server: %r",
+                        response["supportedConnectionTypes"])
             connection_type = self._pick_connection_type(
                 response["supportedConnectionTypes"]
             )
@@ -198,7 +195,6 @@ class Client:
                     extensions=self.extensions,
                     auth=self.auth,
                     loop=self._loop)
-            LOGGER.debug("Picked connection type: %r", connection_type.value)
             return transport
         except Exception:
             await transport.close()
@@ -221,14 +217,24 @@ class Client:
         if not self.closed:
             raise ClientInvalidOperation("Client is already open.")
 
+        LOGGER.info("Opening client with connection types %r ...",
+                    [t.value for t in self._connection_types])
         self._transport = await self._negotiate_transport()
 
         response = await self._transport.connect()
         self._verify_response(response)
         self._closed = False
+        LOGGER.info("Client opened with connection_type %r",
+                    self.connection_type.value)
 
     async def close(self):
         """Disconnect from the CometD server"""
+        if self.pending_count == 0:
+            LOGGER.info("Closing client...")
+        else:
+            LOGGER.warning(
+                "Closing client while %s messages are still pending...",
+                self.pending_count)
         try:
             if self._transport and self._transport.client_id:
                 await self._transport.disconnect()
@@ -244,6 +250,7 @@ class Client:
             if self._transport:
                 await self._transport.close()
             self._closed = True
+            LOGGER.info("Client closed.")
 
     async def subscribe(self, channel):
         """Subscribe to *channel*
@@ -259,6 +266,7 @@ class Client:
                                          "the client is closed.")
         response = await self._transport.subscribe(channel)
         self._verify_response(response)
+        LOGGER.info("Subscribed to channel %s", channel)
 
     async def unsubscribe(self, channel):
         """Unsubscribe from *channel*
@@ -274,6 +282,7 @@ class Client:
                                          "while, the client is closed.")
         response = await self._transport.unsubscribe(channel)
         self._verify_response(response)
+        LOGGER.info("Unsubscribed from channel %s", channel)
 
     async def publish(self, channel, data):
         """Publish *data* to the given *channel*

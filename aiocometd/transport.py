@@ -693,7 +693,8 @@ class _TransportBase(Transport):
         try:
             self.incoming_queue.put_nowait(message)
         except asyncio.QueueFull:
-            LOGGER.debug("Incoming message queue is full, dropping message.")
+            LOGGER.warning("Incoming message queue is full, "
+                           "dropping message: %r", message)
 
     def _start_connect_task(self, coro):
         """Wrap the *coro* in a future and schedule it
@@ -813,8 +814,8 @@ class _TransportBase(Transport):
         # there is not reconnect advice from the server or its value
         # is none
         else:
-            LOGGER.debug("No reconnect advice provided, no more operations "
-                         "will be scheduled.")
+            LOGGER.warning("No reconnect advice provided, no more operations "
+                           "will be scheduled.")
             # if there is a finished connect taks enqueue its result
             # since it's a server error that should be handled by the
             # consumer
@@ -908,7 +909,7 @@ class LongPollingTransport(_TransportBase):
             response_payload = await response.json()
             headers = response.headers
         except aiohttp.client_exceptions.ClientError as error:
-            LOGGER.debug("Failed to send payload, %s", error)
+            LOGGER.warning("Failed to send payload, %s", error)
             raise TransportError(str(error)) from error
         return await self._consume_payload(response_payload, headers=headers,
                                            find_response_for=payload[0])
@@ -1044,7 +1045,7 @@ class WebSocketTransport(_TransportBase):
                 return await self._send_socket_payload(socket, payload)
 
         except aiohttp.client_exceptions.ClientError as error:
-            LOGGER.debug("Failed to send payload, %s", error)
+            LOGGER.warning("Failed to send payload, %s", error)
             raise TransportError(str(error)) from error
 
     async def _send_socket_payload(self, socket, payload):

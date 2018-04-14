@@ -47,46 +47,31 @@ class TestClient(TestCase):
         self.assertIs(client._loop, loop)
 
     def test_init_with_no_connection_types(self):
-        with self.assertLogs("aiocometd.client", "DEBUG") as log:
-            client = Client(endpoint=None)
+        client = Client(endpoint=None)
 
         self.assertEqual(client._connection_types,
                          [ConnectionType.WEBSOCKET,
                           ConnectionType.LONG_POLLING])
         connection_type_strings = [ct.value for ct in
                                    client._connection_types]
-        log_fmt_spec = "DEBUG:aiocometd.client:" \
-                       "Created client with connection_types: {!r}"
-        self.assertEqual(log.output,
-                         [log_fmt_spec.format(connection_type_strings)])
 
     def test_init_with_connection_types_list(self):
         list = [ConnectionType.LONG_POLLING, ConnectionType.WEBSOCKET]
 
-        with self.assertLogs("aiocometd.client", "DEBUG") as log:
-            client = Client(endpoint=None, connection_types=list)
+        client = Client(endpoint=None, connection_types=list)
 
         self.assertEqual(client._connection_types, list)
         connection_type_strings = [ct.value for ct in
                                    client._connection_types]
-        log_fmt_spec = "DEBUG:aiocometd.client:" \
-                       "Created client with connection_types: {!r}"
-        self.assertEqual(log.output,
-                         [log_fmt_spec.format(connection_type_strings)])
 
     def test_init_with_connection_type_value(self):
         type = ConnectionType.LONG_POLLING
 
-        with self.assertLogs("aiocometd.client", "DEBUG") as log:
-            client = Client(endpoint=None, connection_types=type)
+        client = Client(endpoint=None, connection_types=type)
 
         self.assertEqual(client._connection_types, [type])
         connection_type_strings = [ct.value for ct in
                                    client._connection_types]
-        log_fmt_spec = "DEBUG:aiocometd.client:" \
-                       "Created client with connection_types: {!r}"
-        self.assertEqual(log.output,
-                         [log_fmt_spec.format(connection_type_strings)])
 
     def test_subscriptions(self):
         self.client._transport = mock.MagicMock()
@@ -185,14 +170,10 @@ class TestClient(TestCase):
         self.client._verify_response.assert_called_with(response)
         self.client._pick_connection_type.assert_called_with(
             response["supportedConnectionTypes"])
-        log_prefix = "DEBUG:aiocometd.client:"
-        log_message1 = (log_prefix +
-                        "Connection types supported by the server: {!r}"
-                        .format(response["supportedConnectionTypes"]))
-        log_message2 = (log_prefix +
-                        "Picked connection type: {!r}"
-                        .format(DEFAULT_CONNECTION_TYPE.value))
-        self.assertEqual(log.output, [log_message1, log_message2])
+        log_message = ("INFO:aiocometd.client:"
+                       "Connection types supported by the server: {!r}"
+                       .format(response["supportedConnectionTypes"]))
+        self.assertEqual(log.output, [log_message])
 
     @mock.patch("aiocometd.client.create_transport")
     async def test_negotiate_transport_error(self, create_transport):
@@ -228,11 +209,10 @@ class TestClient(TestCase):
         self.client._pick_connection_type.assert_called_with(
             response["supportedConnectionTypes"])
         transport.close.assert_called()
-        log_prefix = "DEBUG:aiocometd.client:"
-        log_message1 = (log_prefix +
-                        "Connection types supported by the server: {!r}"
-                        .format(response["supportedConnectionTypes"]))
-        self.assertEqual(log.output, [log_message1])
+        log_message = ("INFO:aiocometd.client:"
+                       "Connection types supported by the server: {!r}"
+                       .format(response["supportedConnectionTypes"]))
+        self.assertEqual(log.output, [log_message])
 
     @mock.patch("aiocometd.client.create_transport")
     async def test_negotiate_transport_non_default(self, create_transport):
@@ -288,17 +268,14 @@ class TestClient(TestCase):
         self.client._pick_connection_type.assert_called_with(
             response["supportedConnectionTypes"])
         transport1.close.assert_called()
-        log_prefix = "DEBUG:aiocometd.client:"
-        log_message1 = (log_prefix +
-                        "Connection types supported by the server: {!r}"
-                        .format(response["supportedConnectionTypes"]))
-        log_message2 = (log_prefix +
-                        "Picked connection type: {!r}"
-                        .format(non_default_type.value))
-        self.assertEqual(log.output, [log_message1, log_message2])
+        log_message = ("INFO:aiocometd.client:"
+                       "Connection types supported by the server: {!r}"
+                       .format(response["supportedConnectionTypes"]))
+        self.assertEqual(log.output, [log_message])
 
     async def test_open(self):
         transport = mock.MagicMock()
+        transport.connection_type = ConnectionType.LONG_POLLING
         connect_result = object()
         transport.connect = mock.CoroutineMock(return_value=connect_result)
         self.client._negotiate_transport = mock.CoroutineMock(
@@ -307,11 +284,19 @@ class TestClient(TestCase):
         self.client._verify_response = mock.MagicMock()
         self.client._closed = True
 
-        await self.client.open()
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            await self.client.open()
 
         self.client._negotiate_transport.assert_called()
         transport.connect.assert_called()
         self.client._verify_response.assert_called_with(connect_result)
+        self.assertEqual(
+            log.output,
+            ["INFO:aiocometd.client:Opening client with connection "
+             "types {!r} ..."
+             .format([t.value for t in self.client._connection_types]),
+             "INFO:aiocometd.client:Client opened with connection_type {!r}"
+             .format(self.client.connection_type.value)])
 
     async def test_open_if_already_open(self):
         transport = mock.MagicMock()
@@ -337,12 +322,40 @@ class TestClient(TestCase):
         self.client._transport.client_id = "client_id"
         self.client._transport.disconnect = mock.CoroutineMock()
         self.client._transport.close = mock.CoroutineMock()
+        expected_log = [
+            "INFO:aiocometd.client:Closing client...",
+            "INFO:aiocometd.client:Client closed."
+        ]
 
-        await self.client.close()
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            await self.client.close()
 
         self.client._transport.disconnect.assert_called()
         self.client._transport.close.assert_called()
         self.assertTrue(self.client.closed)
+        self.assertEqual(log.output, expected_log)
+
+    async def test_close_with_pending_messages(self):
+        self.client._closed = False
+        self.client._transport = mock.MagicMock()
+        self.client._transport.client_id = "client_id"
+        self.client._transport.disconnect = mock.CoroutineMock()
+        self.client._transport.close = mock.CoroutineMock()
+        self.client._incoming_queue = asyncio.Queue()
+        self.client._incoming_queue.put_nowait(object())
+        expected_log = [
+            "WARNING:aiocometd.client:Closing client while {} messages are "
+            "still pending...".format(self.client.pending_count),
+            "INFO:aiocometd.client:Client closed."
+        ]
+
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            await self.client.close()
+
+        self.client._transport.disconnect.assert_called()
+        self.client._transport.close.assert_called()
+        self.assertTrue(self.client.closed)
+        self.assertEqual(log.output, expected_log)
 
     async def test_close_no_client_id(self):
         self.client._closed = False
@@ -350,12 +363,18 @@ class TestClient(TestCase):
         self.client._transport.client_id = None
         self.client._transport.disconnect = mock.CoroutineMock()
         self.client._transport.close = mock.CoroutineMock()
+        expected_log = [
+            "INFO:aiocometd.client:Closing client...",
+            "INFO:aiocometd.client:Client closed."
+        ]
 
-        await self.client.close()
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            await self.client.close()
 
         self.client._transport.disconnect.assert_not_called()
         self.client._transport.close.assert_called()
         self.assertTrue(self.client.closed)
+        self.assertEqual(log.output, expected_log)
 
     async def test_close_if_already_closed(self):
         self.client._closed = True
@@ -364,11 +383,18 @@ class TestClient(TestCase):
         self.client._transport.disconnect = mock.CoroutineMock()
         self.client._transport.close = mock.CoroutineMock()
 
-        await self.client.close()
+        expected_log = [
+            "INFO:aiocometd.client:Closing client...",
+            "INFO:aiocometd.client:Client closed."
+        ]
+
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+         await self.client.close()
 
         self.client._transport.disconnect.assert_called()
         self.client._transport.close.assert_called()
         self.assertTrue(self.client.closed)
+        self.assertEqual(log.output, expected_log)
 
     async def test_close_on_transport_error(self):
         self.client._closed = False
@@ -379,8 +405,10 @@ class TestClient(TestCase):
             side_effect=error
         )
         self.client._transport.close = mock.CoroutineMock()
-        expected_log = ["DEBUG:aiocometd.client:"
-                        "Disconnect request failed, {}".format(error)]
+        expected_log = ["INFO:aiocometd.client:Closing client...",
+                        "DEBUG:aiocometd.client:"
+                        "Disconnect request failed, {}".format(error),
+                        "INFO:aiocometd.client:Client closed."]
 
         with self.assertLogs("aiocometd.client", "DEBUG") as log:
             await self.client.close()
@@ -403,9 +431,13 @@ class TestClient(TestCase):
         )
         self.client._closed = False
 
-        await self.client.subscribe("channel1")
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            await self.client.subscribe("channel1")
 
         self.client._transport.subscribe.assert_called_with("channel1")
+        self.assertEqual(log.output,
+                         ["INFO:aiocometd.client:Subscribed to channel {}"
+                          .format("channel1")])
 
     async def test_subscribe_on_closed(self):
         self.client._closed = True
@@ -447,9 +479,13 @@ class TestClient(TestCase):
         )
         self.client._closed = False
 
-        await self.client.unsubscribe("channel1")
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            await self.client.unsubscribe("channel1")
 
         self.client._transport.unsubscribe.assert_called_with("channel1")
+        self.assertEqual(log.output,
+                         ["INFO:aiocometd.client:Unsubscribed from channel {}"
+                         .format("channel1")])
 
     async def test_unsubscribe_on_closed(self):
         self.client._closed = True
