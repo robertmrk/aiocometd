@@ -7,7 +7,8 @@ from http import HTTPStatus
 
 import aiohttp
 
-from .exceptions import TransportError, TransportInvalidOperation
+from .exceptions import TransportError, TransportInvalidOperation, \
+    TransportConnectionClosed
 from .utils import get_error_code
 
 
@@ -1036,13 +1037,21 @@ class WebSocketTransport(_TransportBase):
         try:
             # the channel of the first message
             channel = payload[0]["channel"]
-            # get the socket and the lock associated with it, for the channel
-            # of the first message
-            socket = await self._get_socket(channel, headers)
+            # lock the socket until we're done sending the payload and
+            # receiving the response
             lock = self._get_socket_lock(channel)
-
             async with lock:
-                return await self._send_socket_payload(socket, payload)
+                try:
+                    # try to send the payload on the socket which might have
+                    # been closed since the last time it was used
+                    socket = await self._get_socket(channel, headers)
+                    return await self._send_socket_payload(socket, payload)
+                except TransportConnectionClosed:
+                    # if the socket was indeed closed, try to reopen the socket
+                    # and send the payload, since the connection could've
+                    # normalised since the last network problem
+                    socket = await self._get_socket(channel, headers)
+                    return await self._send_socket_payload(socket, payload)
 
         except aiohttp.client_exceptions.ClientError as error:
             LOGGER.warning("Failed to send payload, %s", error)
@@ -1059,12 +1068,17 @@ class WebSocketTransport(_TransportBase):
         :return: Response payload
         :rtype: list[dict]
         :raises TransportError: When the request fails.
+        :raises TransportConnectionClosed: When the *socket* receives a CLOSE \
+        message instead of the expected response
         """
         # receive responses from the server and consume them,
         # until we get back the response for the first message in the *payload*
         await socket.send_json(payload)
         while True:
             response = await socket.receive()
+            if response.type == aiohttp.WSMsgType.CLOSE:
+                raise TransportConnectionClosed("Received CLOSE message on "
+                                                "the websocket.")
             response_payload = response.json()
             matching_response = await self._consume_payload(
                 response_payload,

@@ -1,12 +1,13 @@
 import asyncio
 
 from asynctest import TestCase, mock
-from aiohttp import ClientSession, client_exceptions
+from aiohttp import ClientSession, client_exceptions, WSMsgType
 
 from aiocometd.transport import LongPollingTransport, TransportState, \
     _TransportBase, _WebSocket, WebSocketTransport, register_transport, \
     transport_classes, create_transport, ConnectionType
-from aiocometd.exceptions import TransportError, TransportInvalidOperation
+from aiocometd.exceptions import TransportError, TransportInvalidOperation, \
+    TransportConnectionClosed
 from aiocometd.extension import Extension, AuthExtension
 
 
@@ -1638,6 +1639,25 @@ class TestWebSocketTransport(TestCase):
             find_response_for=payload[0]
         )
 
+    async def test_send_socket_payload_socket_closed(self):
+        matching_response = object()
+        payload = [object()]
+        socket = mock.MagicMock()
+        socket.send_json = mock.CoroutineMock()
+        response = mock.MagicMock()
+        response.type = WSMsgType.CLOSE
+        socket.receive = mock.CoroutineMock(return_value=response)
+        self.transport._consume_payload = mock.CoroutineMock(
+            return_value=matching_response
+        )
+
+        with self.assertRaises(TransportConnectionClosed,
+                               msg="Received CLOSE message on the websocket."):
+            await self.transport._send_socket_payload(socket, payload)
+
+        socket.send_json.assert_called_with(payload)
+        self.transport._consume_payload.assert_not_called()
+
     async def test_send_final_payload(self):
         channel = "channel"
         payload = [dict(channel=channel)]
@@ -1661,7 +1681,7 @@ class TestWebSocketTransport(TestCase):
         self.transport._send_socket_payload.assert_called_with(socket,
                                                                payload)
 
-    async def test_send_final_payload_error(self):
+    async def test_send_final_payload_transport_error(self):
         channel = "channel"
         payload = [dict(channel=channel)]
         lock = mock.MagicMock()
@@ -1687,6 +1707,34 @@ class TestWebSocketTransport(TestCase):
         lock.__aexit__.assert_called()
         self.transport._send_socket_payload.assert_called_with(socket,
                                                                payload)
+
+    async def test_send_final_payload_connection_closed_error(self):
+        channel = "channel"
+        payload = [dict(channel=channel)]
+        lock = mock.MagicMock()
+        socket = object()
+        socket2 = object()
+        response = object()
+        self.transport._get_socket = mock.CoroutineMock(
+            side_effect=[socket, socket2])
+        self.transport._get_socket_lock = mock.MagicMock(return_value=lock)
+        error = TransportConnectionClosed()
+        self.transport._send_socket_payload = \
+            mock.CoroutineMock(side_effect=[error, response])
+        headers = object()
+
+        result = await self.transport._send_final_payload(payload,
+                                                          headers=headers)
+
+        self.assertEqual(result, response)
+        self.transport._get_socket.assert_has_calls([
+            mock.call(channel, headers), mock.call(channel, headers)])
+        self.transport._get_socket_lock.assert_called_with(channel)
+        lock.__aenter__.assert_called()
+        lock.__aexit__.assert_called()
+        self.transport._send_socket_payload.assert_has_calls([
+            mock.call(socket, payload), mock.call(socket2, payload)
+        ])
 
 
 class TestTransportFactoryFunctions(TestCase):

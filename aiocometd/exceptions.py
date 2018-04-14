@@ -21,6 +21,10 @@ class TransportTimeoutError(TransportError):
     """Transport timeout"""
 
 
+class TransportConnectionClosed(TransportError):
+    """The connection unexpectedly closed"""
+
+
 class ServerError(AiocometdException):
     """CometD server side error"""
     def __init__(self, message, response):
