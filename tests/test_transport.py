@@ -637,8 +637,8 @@ class TestTransportBase(TestCase):
         with self.assertLogs("aiocometd.transport", "DEBUG") as log:
             self.transport._enqueue_message(message)
 
-        log_message = "DEBUG:aiocometd.transport:Incoming message queue is " \
-                      "full, dropping message."
+        log_message = "WARNING:aiocometd.transport:Incoming message queue is "\
+                      "full, dropping message: {!r}".format(message)
         self.assertEqual(log.output, [log_message])
         self.transport.incoming_queue.put_nowait.assert_called_with(message)
 
@@ -1049,8 +1049,8 @@ class TestTransportBase(TestCase):
                 self.transport._follow_advice(5)
 
             self.assertEqual(log.output,
-                             ["DEBUG:aiocometd.transport:No reconnect advice "
-                              "provided, no more operations will be "
+                             ["WARNING:aiocometd.transport:No reconnect "
+                              "advice provided, no more operations will be "
                               "scheduled."])
             self.transport._handshake.assert_not_called()
             self.transport._connect.assert_not_called()
@@ -1077,8 +1077,8 @@ class TestTransportBase(TestCase):
                 self.transport._follow_advice(5)
 
             self.assertEqual(log.output,
-                             ["DEBUG:aiocometd.transport:No reconnect advice "
-                              "provided, no more operations will be "
+                             ["WARNING:aiocometd.transport:No reconnect "
+                              "advice provided, no more operations will be "
                               "scheduled."])
             self.transport._handshake.assert_not_called()
             self.transport._connect.assert_not_called()
@@ -1431,7 +1431,7 @@ class TestLongPollingTransport(TestCase):
                 await self.transport._send_final_payload(payload,
                                                          headers=headers)
 
-        log_message = "DEBUG:aiocometd.transport:" \
+        log_message = "WARNING:aiocometd.transport:" \
                       "Failed to send payload, {}".format(post_exception)
         self.assertEqual(log.output, [log_message])
         self.transport._http_semaphore.__aenter__.assert_called()
@@ -1678,7 +1678,7 @@ class TestWebSocketTransport(TestCase):
                 await self.transport._send_final_payload(payload,
                                                          headers=headers)
 
-        log_message = "DEBUG:aiocometd.transport:" \
+        log_message = "WARNING:aiocometd.transport:" \
                       "Failed to send payload, {}".format(exception)
         self.assertEqual(log.output, [log_message])
         self.transport._get_socket.assert_called_with(channel, headers)
