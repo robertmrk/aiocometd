@@ -14,7 +14,7 @@ from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
 LOGGER = logging.getLogger(__name__)
 
 
-class Client:
+class Client: # pylint: disable=too-many-instance-attributes
     """CometD client"""
     #: Predefined server error messages by channel name
     _SERVER_ERROR_MESSAGES = {
@@ -113,8 +113,7 @@ class Client:
         """Set of subscribed channels"""
         if self._transport:
             return self._transport.subscriptions
-        else:
-            return set()
+        return set()
 
     @property
     def connection_type(self):
@@ -148,8 +147,7 @@ class Client:
         if not intersection:
             return None
 
-        result = min(intersection,
-                     key=lambda type: self._connection_types.index(type))
+        result = min(intersection, key=self._connection_types.index)
         return result
 
     async def _negotiate_transport(self):

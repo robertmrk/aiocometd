@@ -46,24 +46,24 @@ class MetaChannel(str, Enum):
 
 
 DEFAULT_CONNECTION_TYPE = ConnectionType.LONG_POLLING
-transport_classes = {}
+TRANSPORT_CLASSES = {}
 
 
-def register_transport(type):
+def register_transport(conn_type):
     """Class decorator for registering transport classes
 
     The class' connection_type property will be also defined to return the
     given *connection_type*
-    :param ConnectionType type: A connection type
+    :param ConnectionType conn_type: A connection type
     :return: The updated class
     """
+    # pylint: disable=unused-argument, missing-docstring
     def decorator(cls):
-        global transport_classes
-        transport_classes[type] = cls
+        TRANSPORT_CLASSES[conn_type] = cls
 
         @property
         def connection_type(instance):
-            return type
+            return conn_type
 
         cls.connection_type = connection_type
         return cls
@@ -80,13 +80,11 @@ def create_transport(connection_type, *args, **kwargs):
     :return: A transport object
     :rtype: Transport
     """
-    global transport_classes
-
-    if connection_type not in transport_classes:
+    if connection_type not in TRANSPORT_CLASSES:
         raise TransportInvalidOperation("There is no transport for connection "
                                         "type {!r}".format(connection_type))
 
-    return transport_classes[connection_type](*args, **kwargs)
+    return TRANSPORT_CLASSES[connection_type](*args, **kwargs)
 
 
 @unique
@@ -801,7 +799,7 @@ class _TransportBase(Transport):
                 self._state = TransportState.CONNECTED
                 self._connected_event.set()
                 self._connecting_event.clear()
-        except Exception as error:
+        except Exception as error: # pylint: disable=broad-except
             result = error
             reconnect_timeout = self._reconnect_timeout
             if self.state == TransportState.CONNECTED:
@@ -1041,8 +1039,7 @@ class WebSocketTransport(_TransportBase):
         """
         if channel in self._connect_task_channels:
             return await self._connect_websocket.get_socket(headers)
-        else:
-            return await self._websocket.get_socket(headers)
+        return await self._websocket.get_socket(headers)
 
     def _get_socket_lock(self, channel):
         """Get an exclusive lock object for the given *channel*
@@ -1053,8 +1050,7 @@ class WebSocketTransport(_TransportBase):
         """
         if channel in self._connect_task_channels:
             return self._connect_websocket_lock
-        else:
-            return self._websocket_lock
+        return self._websocket_lock
 
     async def _send_final_payload(self, payload, *, headers):
         try:

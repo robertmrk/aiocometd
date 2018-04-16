@@ -26,7 +26,7 @@ class Extension(ABC):
         """
 
 
-class AuthExtension(Extension):
+class AuthExtension(Extension): # pylint: disable=abstract-method
     """Extension with support for authentication"""
     async def authenticate(self):
         """Called after a failed authentication attempt

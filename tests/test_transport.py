@@ -5,7 +5,7 @@ from aiohttp import ClientSession, client_exceptions, WSMsgType
 
 from aiocometd.transport import LongPollingTransport, TransportState, \
     _TransportBase, _WebSocket, WebSocketTransport, register_transport, \
-    transport_classes, create_transport, ConnectionType, MetaChannel, \
+    TRANSPORT_CLASSES, create_transport, ConnectionType, MetaChannel, \
     SERVICE_CHANNEL_PREFIX
 from aiocometd.exceptions import TransportError, TransportInvalidOperation, \
     TransportConnectionClosed
@@ -1740,7 +1740,7 @@ class TestWebSocketTransport(TestCase):
 
 class TestTransportFactoryFunctions(TestCase):
     def tearDown(self):
-        transport_classes.clear()
+        TRANSPORT_CLASSES.clear()
 
     def test_register_transport(self):
         connection_type = ConnectionType.LONG_POLLING
@@ -1752,12 +1752,12 @@ class TestTransportFactoryFunctions(TestCase):
         obj = FakeTransport()
 
         self.assertEqual(obj.connection_type, connection_type)
-        self.assertEqual(transport_classes[connection_type], FakeTransport)
+        self.assertEqual(TRANSPORT_CLASSES[connection_type], FakeTransport)
 
     def test_create_transport(self):
         transport = object()
         transport_cls = mock.MagicMock(return_value=transport)
-        transport_classes[ConnectionType.LONG_POLLING] = transport_cls
+        TRANSPORT_CLASSES[ConnectionType.LONG_POLLING] = transport_cls
 
         result = create_transport(ConnectionType.LONG_POLLING,
                                   "arg", kwarg="value")

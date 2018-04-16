@@ -1,3 +1,4 @@
+"""Utility functions"""
 import re
 
 
@@ -15,11 +16,12 @@ def get_error_code(error_field):
     error field) return ``None``
     :rtype: int or None
     """
+    result = None
     if error_field is not None:
         match = re.search(r"^\d{3}", error_field)
         if match:
-            return int(match[0])
-    return None
+            result = int(match[0])
+    return result
 
 
 def get_error_message(error_field):
@@ -35,11 +37,12 @@ def get_error_message(error_field):
     matched otherwise return ``None``
     :rtype: str or None
     """
+    result = None
     if error_field is not None:
         match = re.search(r"(?<=:)[^:]*$", error_field)
         if match:
-            return match[0]
-    return None
+            result = match[0]
+    return result
 
 
 def get_error_args(error_field):
@@ -55,11 +58,12 @@ def get_error_args(error_field):
     can be matched otherwise return ``None``
     :rtype: list[str] or None
     """
+    result = None
     if error_field is not None:
         match = re.search(r"(?<=:).*(?=:)", error_field)
         if match:
             if match[0]:
-                return match[0].split(",")
+                result = match[0].split(",")
             else:
-                return []
-    return None
+                result = []
+    return result

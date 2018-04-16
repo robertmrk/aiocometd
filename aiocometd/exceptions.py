@@ -1,3 +1,4 @@
+"""Exception types"""
 from . import utils
 
 
@@ -26,16 +27,15 @@ class TransportConnectionClosed(TransportError):
 
 
 class ServerError(AiocometdException):
-    """CometD server side error"""
-    def __init__(self, message, response):
-        """If the *response* contains an error field it gets parsed
-        according to the \
-        `specs <https://docs.cometd.org/current/reference/#_code_error_code>`_
+    """CometD server side error
 
-        :param str message: Error description
-        :param dict response: Server response message
-        """
-        super().__init__(message, response)
+    If the *response* contains an error field it gets parsed
+    according to the \
+    `specs <https://docs.cometd.org/current/reference/#_code_error_code>`_
+
+    :param str message: Error description
+    :param dict response: Server response message
+    """
 
     @property
     def message(self):
