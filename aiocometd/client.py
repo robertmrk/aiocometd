@@ -5,7 +5,7 @@ import logging
 from collections import abc
 from contextlib import suppress
 
-from .transport import create_transport, DEFAULT_CONNECTION_TYPE, \
+from .transports import create_transport, DEFAULT_CONNECTION_TYPE, \
     ConnectionType, MetaChannel, SERVICE_CHANNEL_PREFIX
 from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
     TransportTimeoutError, ClientError
@@ -14,7 +14,7 @@ from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
 LOGGER = logging.getLogger(__name__)
 
 
-class Client: # pylint: disable=too-many-instance-attributes
+class Client:  # pylint: disable=too-many-instance-attributes
     """CometD client"""
     #: Predefined server error messages by channel name
     _SERVER_ERROR_MESSAGES = {

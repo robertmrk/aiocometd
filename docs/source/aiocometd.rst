@@ -14,10 +14,10 @@ aiocometd.client module
     :show-inheritance:
 
 
-aiocometd.transport module
---------------------------
+aiocometd.transports module
+---------------------------
 
-.. automodule:: aiocometd.transport
+.. automodule:: aiocometd.transports
     :members:
     :private-members:
     :undoc-members:

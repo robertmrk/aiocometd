@@ -1,220 +1,24 @@
-"""Transport classes"""
+"""Base transtport abstract class definition"""
 import asyncio
 import logging
-from enum import Enum, unique, auto
-from abc import ABC, abstractmethod
 from http import HTTPStatus
+from abc import abstractmethod
 
 import aiohttp
 
-from .exceptions import TransportError, TransportInvalidOperation, \
-    TransportConnectionClosed
-from .utils import get_error_code
+from .abc import Transport
+from .constants import MetaChannel, TransportState, META_CHANNEL_PREFIX, \
+    SERVICE_CHANNEL_PREFIX, HANDSHAKE_MESSAGE, CONNECT_MESSAGE, \
+    DISCONNECT_MESSAGE, SUBSCRIBE_MESSAGE, UNSUBSCRIBE_MESSAGE, \
+    PUBLISH_MESSAGE
+from ..utils import get_error_code
+from ..exceptions import TransportInvalidOperation
 
 
 LOGGER = logging.getLogger(__name__)
 
 
-@unique
-class ConnectionType(Enum):
-    """Connection types"""
-    #: Long polling connection type
-    LONG_POLLING = "long-polling"
-    #: Websocket connection type
-    WEBSOCKET = "websocket"
-
-
-#: CometD meta channel prefix
-META_CHANNEL_PREFIX = "/meta/"
-#: CometD service channel prefix
-SERVICE_CHANNEL_PREFIX = "/service/"
-
-
-@unique
-class MetaChannel(str, Enum):
-    """CometD meta channel names"""
-    #: Handshake meta channel
-    HANDSHAKE = META_CHANNEL_PREFIX + "handshake"
-    #: Connect meta channel
-    CONNECT = META_CHANNEL_PREFIX + "connect"
-    #: Disconnect meta channel
-    DISCONNECT = META_CHANNEL_PREFIX + "disconnect"
-    #: Subscribe meta channel
-    SUBSCRIBE = META_CHANNEL_PREFIX + "subscribe"
-    #: Unsubscribe meta channel
-    UNSUBSCRIBE = META_CHANNEL_PREFIX + "unsubscribe"
-
-
-DEFAULT_CONNECTION_TYPE = ConnectionType.LONG_POLLING
-TRANSPORT_CLASSES = {}
-
-
-def register_transport(conn_type):
-    """Class decorator for registering transport classes
-
-    The class' connection_type property will be also defined to return the
-    given *connection_type*
-    :param ConnectionType conn_type: A connection type
-    :return: The updated class
-    """
-    # pylint: disable=unused-argument, missing-docstring
-    def decorator(cls):
-        TRANSPORT_CLASSES[conn_type] = cls
-
-        @property
-        def connection_type(instance):
-            return conn_type
-
-        cls.connection_type = connection_type
-        return cls
-    return decorator
-
-
-def create_transport(connection_type, *args, **kwargs):
-    """Create a transport object that can be used for the given
-    *connection_type*
-
-    :param ConnectionType connection_type: A connection type
-    :param args: Positional arguments to pass to the transport
-    :param kwargs: Keyword arguments to pass to the transport
-    :return: A transport object
-    :rtype: Transport
-    """
-    if connection_type not in TRANSPORT_CLASSES:
-        raise TransportInvalidOperation("There is no transport for connection "
-                                        "type {!r}".format(connection_type))
-
-    return TRANSPORT_CLASSES[connection_type](*args, **kwargs)
-
-
-@unique
-class TransportState(Enum):
-    """Describes a transport object's state"""
-    #: Transport is disconnected
-    DISCONNECTED = auto()
-    #: Transport is trying to establish a connection
-    CONNECTING = auto()
-    #: Transport is connected to the server
-    CONNECTED = auto()
-    #: Transport is disconnecting from the server
-    DISCONNECTING = auto()
-
-
-class Transport(ABC):
-    """Defines the operations that all transport classes should support"""
-    @property
-    @abstractmethod
-    def connection_type(self):
-        """The transport's connection type"""
-
-    @property
-    @abstractmethod
-    def endpoint(self):
-        """CometD service url"""
-
-    @property
-    @abstractmethod
-    def client_id(self):
-        """Clinet id value assigned by the server"""
-
-    @property
-    @abstractmethod
-    def state(self):
-        """Current state of the transport"""
-
-    @property
-    @abstractmethod
-    def subscriptions(self):
-        """Set of subscribed channels"""
-
-    @abstractmethod
-    async def handshake(self, connection_types):
-        """Executes the handshake operation
-
-        :param list[ConnectionType] connection_types: list of connection types
-        :return: Handshake response
-        :rtype: dict
-        :raises TransportError: When the network request fails.
-        """
-
-    @abstractmethod
-    async def connect(self):
-        """Connect to the server
-
-        The transport will try to start and maintain a continuous connection
-        with the server, but it'll return with the response of the first
-        successful connection as soon as possible.
-
-        :return dict: The response of the first successful connection.
-        :raise TransportInvalidOperation: If the transport doesn't has a \
-        client id yet, or if it's not in a :obj:`~TransportState.DISCONNECTED`\
-        :obj:`state`.
-        :raises TransportError: When the network request fails.
-        """
-
-    @abstractmethod
-    async def disconnect(self):
-        """Disconnect from server
-
-        :raises TransportError: When the network request fails.
-        """
-
-    @abstractmethod
-    async def close(self):
-        """Close transport and release resources"""
-
-    @abstractmethod
-    async def subscribe(self, channel):
-        """Subscribe to *channel*
-
-        :param str channel: Name of the channel
-        :return: Subscribe response
-        :rtype: dict
-        :raise TransportInvalidOperation: If the transport is not in the \
-        :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
-        :obj:`state`
-        :raises TransportError: When the network request fails.
-        """
-
-    @abstractmethod
-    async def unsubscribe(self, channel):
-        """Unsubscribe from *channel*
-
-        :param str channel: Name of the channel
-        :return: Unsubscribe response
-        :rtype: dict
-        :raise TransportInvalidOperation: If the transport is not in the \
-        :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
-        :obj:`state`
-        :raises TransportError: When the network request fails.
-        """
-
-    @abstractmethod
-    async def publish(self, channel, data):
-        """Publish *data* to the given *channel*
-
-        :param str channel: Name of the channel
-        :param dict data: Data to send to the server
-        :return: Publish response
-        :rtype: dict
-        :raise TransportInvalidOperation: If the transport is not in the \
-        :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
-        :obj:`state`
-        :raises TransportError: When the network request fails.
-        """
-
-    @abstractmethod
-    async def wait_for_connected(self):
-        """Waits for and returns when the transport enters the \
-        :obj:`~TransportState.CONNECTED` state"""
-
-    @abstractmethod
-    async def wait_for_connecting(self):
-        """Waits for and returns when the transport enters the \
-        :obj:`~TransportState.CONNECTING` state"""
-
-
-class _TransportBase(Transport):
+class TransportBase(Transport):
     """Base transport implementation
 
     This class contains most of the transport operations implemented, it can
@@ -222,60 +26,6 @@ class _TransportBase(Transport):
     When subclassing, at a minimum the :meth:`_send_final_payload` and
     :obj:`~Transport.connection_type` methods should be reimplemented.
     """
-    #: Handshake message template
-    _HANDSHAKE_MESSAGE = {
-        # mandatory
-        "channel": MetaChannel.HANDSHAKE,
-        "version": "1.0",
-        "supportedConnectionTypes": None,
-        # optional
-        "minimumVersion": "1.0",
-        "id": None
-    }
-    #: Connect message template
-    _CONNECT_MESSAGE = {
-        # mandatory
-        "channel": MetaChannel.CONNECT,
-        "clientId": None,
-        "connectionType": None,
-        # optional
-        "id": None
-    }
-    #: Disconnect message template
-    _DISCONNECT_MESSAGE = {
-        # mandatory
-        "channel": MetaChannel.DISCONNECT,
-        "clientId": None,
-        # optional
-        "id": None
-    }
-    #: Subscribe message template
-    _SUBSCRIBE_MESSAGE = {
-        # mandatory
-        "channel": MetaChannel.SUBSCRIBE,
-        "clientId": None,
-        "subscription": None,
-        # optional
-        "id": None
-    }
-    #: Unsubscribe message template
-    _UNSUBSCRIBE_MESSAGE = {
-        # mandatory
-        "channel": MetaChannel.UNSUBSCRIBE,
-        "clientId": None,
-        "subscription": None,
-        # optional
-        "id": None
-    }
-    #: Publish message template
-    _PUBLISH_MESSAGE = {
-        # mandatory
-        "channel": None,
-        "clientId": None,
-        "data": None,
-        # optional
-        "id": None
-    }
     #: Timeout to give to HTTP session to close itself
     _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
@@ -360,7 +110,8 @@ class _TransportBase(Transport):
     async def _close_http_session(self):
         """Close the http session if it's not already closed"""
         # graceful shutdown recommended by the documentation
-        # https://aiohttp.readthedocs.io/en/stable/client_advanced.html#graceful-shutdown
+        # https://aiohttp.readthedocs.io/en/stable/client_advanced.html\
+        # #graceful-shutdown
         if self._http_session is not None and not self._http_session.closed:
             await self._http_session.close()
             await asyncio.sleep(self._HTTP_SESSION_CLOSE_TIMEOUT)
@@ -430,7 +181,7 @@ class _TransportBase(Transport):
 
         # send message and await its response
         response_message = await self._send_message(
-            self._HANDSHAKE_MESSAGE.copy(),
+            HANDSHAKE_MESSAGE.copy(),
             supportedConnectionTypes=connection_type_values
         )
         # store the returned client id or set it to None if it's not in the
@@ -774,11 +525,11 @@ class _TransportBase(Transport):
         """
         if delay:
             await asyncio.sleep(delay, loop=self._loop)
-        message = self._CONNECT_MESSAGE.copy()
+        message = CONNECT_MESSAGE.copy()
         payload = [message]
         if self._subscribe_on_connect and self.subscriptions:
             for subscription in self.subscriptions:
-                extra_message = self._SUBSCRIBE_MESSAGE.copy()
+                extra_message = SUBSCRIBE_MESSAGE.copy()
                 extra_message["subscription"] = subscription
                 payload.append(extra_message)
         result = await self._send_payload_with_auth(payload)
@@ -799,7 +550,7 @@ class _TransportBase(Transport):
                 self._state = TransportState.CONNECTED
                 self._connected_event.set()
                 self._connecting_event.clear()
-        except Exception as error: # pylint: disable=broad-except
+        except Exception as error:  # pylint: disable=broad-except
             result = error
             reconnect_timeout = self._reconnect_timeout
             if self.state == TransportState.CONNECTED:
@@ -852,7 +603,7 @@ class _TransportBase(Transport):
         try:
             self._state = TransportState.DISCONNECTING
             await self._stop_connect_task()
-            await self._send_message(self._DISCONNECT_MESSAGE.copy())
+            await self._send_message(DISCONNECT_MESSAGE.copy())
         finally:
             self._state = TransportState.DISCONNECTED
 
@@ -875,7 +626,7 @@ class _TransportBase(Transport):
                               TransportState.CONNECTED]:
             raise TransportInvalidOperation(
                 "Can't subscribe without being connected to a server.")
-        return await self._send_message(self._SUBSCRIBE_MESSAGE.copy(),
+        return await self._send_message(SUBSCRIBE_MESSAGE.copy(),
                                         subscription=channel)
 
     async def unsubscribe(self, channel):
@@ -893,7 +644,7 @@ class _TransportBase(Transport):
                               TransportState.CONNECTED]:
             raise TransportInvalidOperation(
                 "Can't unsubscribe without being connected to a server.")
-        return await self._send_message(self._UNSUBSCRIBE_MESSAGE.copy(),
+        return await self._send_message(UNSUBSCRIBE_MESSAGE.copy(),
                                         subscription=channel)
 
     async def publish(self, channel, data):
@@ -912,201 +663,6 @@ class _TransportBase(Transport):
                               TransportState.CONNECTED]:
             raise TransportInvalidOperation(
                 "Can't publish without being connected to a server.")
-        return await self._send_message(self._PUBLISH_MESSAGE.copy(),
+        return await self._send_message(PUBLISH_MESSAGE.copy(),
                                         channel=channel,
                                         data=data)
-
-
-@register_transport(ConnectionType.LONG_POLLING)
-class LongPollingTransport(_TransportBase):
-    """Long-polling type transport"""
-
-    async def _send_final_payload(self, payload, *, headers):
-        try:
-            session = await self._get_http_session()
-            async with self._http_semaphore:
-                response = await session.post(self._endpoint, json=payload,
-                                              ssl=self.ssl, headers=headers)
-            response_payload = await response.json()
-            headers = response.headers
-        except aiohttp.client_exceptions.ClientError as error:
-            LOGGER.warning("Failed to send payload, %s", error)
-            raise TransportError(str(error)) from error
-        return await self._consume_payload(response_payload, headers=headers,
-                                           find_response_for=payload[0])
-
-
-class _WebSocket:
-    """Helper class to create future-like objects which return websocket
-    objects
-
-    This class allows us to use websockets objects without context blocks
-    """
-    def __init__(self, session_factory, *args, **kwargs):
-        """
-        :param asyncio.coroutine session_factory: Coroutine factory function \
-        which returns an HTTP session
-        :param args: positional arguments for the ws_connect function
-        :param kwargs: keyword arguments for the ws_connect function
-        """
-        self._session_factory = session_factory
-        self._constructor_args = args
-        self._constructor_kwargs = kwargs
-        self._context = None
-        self._socket = None
-        self._headers = None
-
-    async def close(self):
-        """Close the websocket"""
-        await self._exit()
-
-    async def get_socket(self, headers):
-        """Create or return an existing websocket object
-
-        :param dict headers: Headers to send
-        :return: Websocket object
-        :rtype: `aiohttp.ClientWebSocketResponse \
-        <https://aiohttp.readthedocs.io/en/stable\
-        /client_reference.html#aiohttp.ClientWebSocketResponse>`_
-        """
-        self._headers = headers
-        # if a the websocket object already exists and if it's in closed state
-        # exit the context manager properly and clear the references
-        if self._socket is not None and self._socket.closed:
-            await self._exit()
-
-        # if there is no websocket object, then create it and enter the \
-        # context manager properly to initialize it
-        if self._socket is None:
-            await self._enter()
-
-        return self._socket
-
-    async def _enter(self):
-        """Enter websocket context"""
-        session = await self._session_factory()
-        kwargs = self._constructor_kwargs.copy()
-        kwargs["headers"] = self._headers
-        self._context = session.ws_connect(*self._constructor_args, **kwargs)
-        self._socket = await self._context.__aenter__()
-
-    async def _exit(self):
-        """Exit websocket context"""
-        if self._context:
-            await self._context.__aexit__(None, None, None)
-            self._socket = self._context = None
-
-
-@register_transport(ConnectionType.WEBSOCKET)
-class WebSocketTransport(_TransportBase):
-    """WebSocket type transport"""
-
-    def __init__(self, *, endpoint, incoming_queue, client_id=None,
-                 reconnection_timeout=1, ssl=None, extensions=None, auth=None,
-                 loop=None):
-        super().__init__(endpoint=endpoint,
-                         incoming_queue=incoming_queue,
-                         client_id=client_id,
-                         reconnection_timeout=reconnection_timeout,
-                         ssl=ssl, extensions=extensions, auth=auth, loop=loop)
-
-        #: channels used during the connect task, requests on these channels
-        #: are usually long running
-        self._connect_task_channels = (MetaChannel.HANDSHAKE,
-                                       MetaChannel.CONNECT)
-        #: websocket for short duration requests
-        self._websocket = _WebSocket(self._get_http_session,
-                                     self.endpoint, ssl=self.ssl)
-        #: exclusive lock for the _websocket object
-        self._websocket_lock = asyncio.Lock()
-        #: websocket for long duration requests
-        self._connect_websocket = _WebSocket(self._get_http_session,
-                                             self.endpoint, ssl=self.ssl)
-        #: exclusive lock for the _connect_websocket object
-        self._connect_websocket_lock = asyncio.Lock()
-
-    async def _get_socket(self, channel, headers):
-        """Get a websocket object for the given *channel*
-
-        Returns different websocket objects for long running and short duration
-        requests, so while a long running request is pending, short duration
-        requests can be transmitted.
-
-        :param str channel: CometD channel name
-        :param dict headers: Headers to send
-        :return: websocket object
-        :rtype: aiohttp.ClientWebSocketResponse
-        """
-        if channel in self._connect_task_channels:
-            return await self._connect_websocket.get_socket(headers)
-        return await self._websocket.get_socket(headers)
-
-    def _get_socket_lock(self, channel):
-        """Get an exclusive lock object for the given *channel*
-
-        :param str channel: CometD channel name
-        :return: lock object for the *channel*
-        :rtype: asyncio.Lock
-        """
-        if channel in self._connect_task_channels:
-            return self._connect_websocket_lock
-        return self._websocket_lock
-
-    async def _send_final_payload(self, payload, *, headers):
-        try:
-            # the channel of the first message
-            channel = payload[0]["channel"]
-            # lock the socket until we're done sending the payload and
-            # receiving the response
-            lock = self._get_socket_lock(channel)
-            async with lock:
-                try:
-                    # try to send the payload on the socket which might have
-                    # been closed since the last time it was used
-                    socket = await self._get_socket(channel, headers)
-                    return await self._send_socket_payload(socket, payload)
-                except TransportConnectionClosed:
-                    # if the socket was indeed closed, try to reopen the socket
-                    # and send the payload, since the connection could've
-                    # normalised since the last network problem
-                    socket = await self._get_socket(channel, headers)
-                    return await self._send_socket_payload(socket, payload)
-
-        except aiohttp.client_exceptions.ClientError as error:
-            LOGGER.warning("Failed to send payload, %s", error)
-            raise TransportError(str(error)) from error
-
-    async def _send_socket_payload(self, socket, payload):
-        """Send *payload* to the server on the given *socket*
-
-        :param socket: WebSocket object
-        :type socket: `aiohttp.ClientWebSocketResponse \
-        <https://aiohttp.readthedocs.io/en/stable\
-        /client_reference.html#aiohttp.ClientWebSocketResponse>`_
-        :param list[dict] payload: A message or a list of messages
-        :return: Response payload
-        :rtype: list[dict]
-        :raises TransportError: When the request fails.
-        :raises TransportConnectionClosed: When the *socket* receives a CLOSE \
-        message instead of the expected response
-        """
-        # receive responses from the server and consume them,
-        # until we get back the response for the first message in the *payload*
-        await socket.send_json(payload)
-        while True:
-            response = await socket.receive()
-            if response.type == aiohttp.WSMsgType.CLOSE:
-                raise TransportConnectionClosed("Received CLOSE message on "
-                                                "the websocket.")
-            response_payload = response.json()
-            matching_response = await self._consume_payload(
-                response_payload,
-                headers=None,
-                find_response_for=payload[0])
-            if matching_response:
-                return matching_response
-
-    async def close(self):
-        await self._websocket.close()
-        await self._connect_websocket.close()
-        await self._close_http_session()
