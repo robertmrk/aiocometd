@@ -78,14 +78,8 @@ class _WebSocket:
 class WebSocketTransport(TransportBase):
     """WebSocket type transport"""
 
-    def __init__(self, *, endpoint, incoming_queue, client_id=None,
-                 reconnection_timeout=1, ssl=None, extensions=None, auth=None,
-                 loop=None):
-        super().__init__(endpoint=endpoint,
-                         incoming_queue=incoming_queue,
-                         client_id=client_id,
-                         reconnection_timeout=reconnection_timeout,
-                         ssl=ssl, extensions=extensions, auth=auth, loop=loop)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
         #: channels used during the connect task, requests on these channels
         #: are usually long running
@@ -186,4 +180,4 @@ class WebSocketTransport(TransportBase):
     async def close(self):
         await self._websocket.close()
         await self._connect_websocket.close()
-        await self._close_http_session()
+        await super().close()

@@ -1,4 +1,5 @@
 """Long polling transport class definition"""
+import asyncio
 import logging
 
 import aiohttp
@@ -15,6 +16,11 @@ LOGGER = logging.getLogger(__name__)
 @register_transport(ConnectionType.LONG_POLLING)
 class LongPollingTransport(TransportBase):
     """Long-polling type transport"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        #: semaphore to limit the number of concurrent HTTP connections to 2
+        self._http_semaphore = asyncio.Semaphore(2, loop=self._loop)
 
     async def _send_final_payload(self, payload, *, headers):
         try:

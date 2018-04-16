@@ -84,8 +84,6 @@ class TransportBase(Transport):
         self._connecting_event = asyncio.Event()
         #: SSL validation mode
         self.ssl = ssl
-        #: semaphore to limit the number of concurrent HTTP connections to 2
-        self._http_semaphore = asyncio.Semaphore(2, loop=self._loop)
         #: http session
         self._http_session = None
         #: List of protocol extension objects
