@@ -1,6 +1,11 @@
+"""CometD client for asyncio"""
 import logging
 
-from ._metadata import version as __version__  # noqa: F401
+from ._metadata import VERSION as __version__  # noqa: F401
+from .client import Client  # noqa: F401
+from .transports import ConnectionType  # noqa: F401
+from .extensions import Extension, AuthExtension  # noqa: F401
+from . import transports  # noqa: F401
 
 # Create a default handler to avoid warnings in applications without logging
 # configuration

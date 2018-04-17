@@ -5,7 +5,7 @@ import logging
 from collections import abc
 from contextlib import suppress
 
-from .transport import create_transport, DEFAULT_CONNECTION_TYPE, \
+from .transports import create_transport, DEFAULT_CONNECTION_TYPE, \
     ConnectionType, MetaChannel, SERVICE_CHANNEL_PREFIX
 from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
     TransportTimeoutError, ClientError
@@ -14,7 +14,7 @@ from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
 LOGGER = logging.getLogger(__name__)
 
 
-class Client:
+class Client:  # pylint: disable=too-many-instance-attributes
     """CometD client"""
     #: Predefined server error messages by channel name
     _SERVER_ERROR_MESSAGES = {
@@ -35,8 +35,8 @@ class Client:
         :param str endpoint: CometD service url
         :param connection_types: List of connection types in order of \
         preference, or a single connection type name. If ``None``, \
-        ["websocket", "long-polling"] will be used.
-        :type connection_types: list[str], str or None
+        [ConnectionType.WEBSOCKET, ConnectionType.LONG_POLLING] will be used.
+        :type connection_types: list[ConnectionType], ConnectionType or None
         :param connection_timeout: The maximum amount of time to wait for the \
         transport to re-establish a connection with the server when the \
         connection fails.
@@ -113,8 +113,7 @@ class Client:
         """Set of subscribed channels"""
         if self._transport:
             return self._transport.subscriptions
-        else:
-            return set()
+        return set()
 
     @property
     def connection_type(self):
@@ -148,8 +147,7 @@ class Client:
         if not intersection:
             return None
 
-        result = min(intersection,
-                     key=lambda type: self._connection_types.index(type))
+        result = min(intersection, key=self._connection_types.index)
         return result
 
     async def _negotiate_transport(self):

@@ -15,11 +15,11 @@ REQUIRED_PACKAGES = [
 ]
 
 setup(
-    name=metadata["title"],
-    version=metadata["version"],
-    description=metadata["description"],
-    author=metadata["author"],
-    author_email=metadata["author_email"],
+    name=metadata["TITLE"],
+    version=metadata["VERSION"],
+    description=metadata["DESCRIPTION"],
+    author=metadata["AUTHOR"],
+    author_email=metadata["AUTHOR_EMAIL"],
     license="MIT",
     packages=["aiocometd"],
     install_requires=REQUIRED_PACKAGES,
