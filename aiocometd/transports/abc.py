@@ -106,11 +106,8 @@ class Transport(ABC):
         """
 
     @abstractmethod
-    async def wait_for_connected(self):
-        """Waits for and returns when the transport enters the \
-        :obj:`~TransportState.CONNECTED` state"""
+    async def wait_for_state(self, state):
+        """Waits for and returns when the transport enters the given *state*
 
-    @abstractmethod
-    async def wait_for_connecting(self):
-        """Waits for and returns when the transport enters the \
-        :obj:`~TransportState.CONNECTING` state"""
+        :param TransportState state: A state value
+        """

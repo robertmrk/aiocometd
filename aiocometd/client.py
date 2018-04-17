@@ -6,7 +6,7 @@ from collections import abc
 from contextlib import suppress
 
 from .transports import create_transport, DEFAULT_CONNECTION_TYPE, \
-    ConnectionType, MetaChannel, SERVICE_CHANNEL_PREFIX
+    ConnectionType, MetaChannel, SERVICE_CHANNEL_PREFIX, TransportState
 from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
     TransportTimeoutError, ClientError
 
@@ -445,9 +445,11 @@ class Client:  # pylint: disable=too-many-instance-attributes
         connection fails.
         """
         while True:
-            await self._transport.wait_for_connecting()
+            await self._transport.wait_for_state(TransportState.CONNECTING)
             try:
-                await asyncio.wait_for(self._transport.wait_for_connected(),
-                                       timeout, loop=self._loop)
+                await asyncio.wait_for(
+                    self._transport.wait_for_state(TransportState.CONNECTED),
+                    timeout, loop=self._loop
+                )
             except asyncio.TimeoutError:
                 break

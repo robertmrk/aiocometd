@@ -8,7 +8,7 @@ from aiocometd.client import Client
 from aiocometd.exceptions import ServerError, ClientInvalidOperation, \
     TransportError, TransportTimeoutError, ClientError
 from aiocometd.transports.constants import DEFAULT_CONNECTION_TYPE, \
-    ConnectionType, MetaChannel, SERVICE_CHANNEL_PREFIX
+    ConnectionType, MetaChannel, SERVICE_CHANNEL_PREFIX, TransportState
 
 
 @unique
@@ -774,10 +774,7 @@ class TestClient(TestCase):
     @mock.patch("aiocometd.client.asyncio")
     async def test_wait_connection_timeout_on_timeout(self, asyncio_mock):
         self.client._transport = mock.MagicMock()
-        self.client._transport.wait_for_connecting = mock.CoroutineMock()
-        self.client._transport.wait_for_connected = mock.MagicMock(
-            return_value=object()
-        )
+        self.client._transport.wait_for_state = mock.CoroutineMock()
         timeout = 2
         asyncio_mock.wait_for = mock.CoroutineMock(
             side_effect=asyncio.TimeoutError()
@@ -786,21 +783,16 @@ class TestClient(TestCase):
 
         await self.client._wait_connection_timeout(timeout)
 
-        self.client._transport.wait_for_connecting.assert_called_once()
-        self.client._transport.wait_for_connected.assert_called_once()
-        asyncio_mock.wait_for.assert_called_with(
-            self.client._transport.wait_for_connected.return_value,
-            timeout,
-            loop=self.client._loop
-        )
+        self.client._transport.wait_for_state.assert_has_calls([
+            mock.call(TransportState.CONNECTING),
+            mock.call(TransportState.CONNECTED)
+        ])
+        asyncio_mock.wait_for.assert_called()
 
     @mock.patch("aiocometd.client.asyncio")
     async def test_wait_connection_timeout_iterations(self, asyncio_mock):
         self.client._transport = mock.MagicMock()
-        self.client._transport.wait_for_connecting = mock.CoroutineMock()
-        self.client._transport.wait_for_connected = mock.MagicMock(
-            return_value=object()
-        )
+        self.client._transport.wait_for_state = mock.CoroutineMock()
         timeout = 2
         asyncio_mock.wait_for = mock.CoroutineMock(
             side_effect=[None, asyncio.TimeoutError()]
@@ -809,18 +801,13 @@ class TestClient(TestCase):
 
         await self.client._wait_connection_timeout(timeout)
 
-        self.client._transport.wait_for_connecting.assert_has_calls(
-            [mock.call()] * 2
-        )
-        self.client._transport.wait_for_connecting.assert_has_calls(
-            [mock.call()] * 2
-        )
-        asyncio_mock.wait_for.assert_has_calls(
-            [mock.call(
-                self.client._transport.wait_for_connected.return_value,
-                timeout,
-                loop=self.client._loop)] * 2
-        )
+        self.client._transport.wait_for_state.assert_has_calls([
+            mock.call(TransportState.CONNECTING),
+            mock.call(TransportState.CONNECTED),
+            mock.call(TransportState.CONNECTING),
+            mock.call(TransportState.CONNECTED)
+        ])
+        asyncio_mock.wait_for.assert_called()
 
     async def test_get_message_no_timeout(self):
         self.client._incoming_queue = mock.MagicMock()

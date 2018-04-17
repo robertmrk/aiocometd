@@ -72,16 +72,14 @@ class TransportBase(Transport):
         self._subscriptions = set()
         #: boolean to mark whether to resubscribe on connect
         self._subscribe_on_connect = False
+        #: dictionary of TransportState and asyncio.Event pairs
+        self._state_events = {_: asyncio.Event() for _ in TransportState}
         #: current state of the transport
         self._state = TransportState.DISCONNECTED
         #: asyncio connection task
         self._connect_task = None
         #: time to wait before reconnecting after a network failure
         self._reconnect_timeout = reconnection_timeout
-        #: asyncio event, set when the state becomes CONNECTED
-        self._connected_event = asyncio.Event()
-        #: asyncio event, set when the state becomes CONNECTING
-        self._connecting_event = asyncio.Event()
         #: SSL validation mode
         self.ssl = ssl
         #: http session
@@ -130,20 +128,44 @@ class TransportBase(Transport):
         return self._client_id
 
     @property
+    def subscriptions(self):
+        """Set of subscribed channels"""
+        return self._subscriptions
+
+    @property
     def state(self):
         """Current state of the transport"""
         return self._state
 
     @property
-    def subscriptions(self):
-        """Set of subscribed channels"""
-        return self._subscriptions
+    def _state(self):
+        """Current state of the transport"""
+        return self.__dict__.setdefault("_state")
 
-    async def wait_for_connected(self):
-        await self._connected_event.wait()
+    @_state.setter
+    def _state(self, value):
+        self._set_state_event(self._state, value)
+        self.__dict__["_state"] = value
 
-    async def wait_for_connecting(self):
-        await self._connecting_event.wait()
+    def _set_state_event(self, old_state, new_state):
+        """Set event associated with the *new_state* and clear the event for
+        the *old_state*
+
+        :param old_state: Old state value
+        :type old_state: TransportState or None
+        :param new_state: New state value
+        :type new_state: TransportState
+        """
+        if old_state is not None:
+            self._state_events[old_state].clear()
+        self._state_events[new_state].set()
+
+    async def wait_for_state(self, state):
+        """Waits for and returns when the transport enters the given *state*
+
+        :param TransportState state: A state value
+        """
+        await self._state_events[state].wait()
 
     async def handshake(self, connection_types):
         """Executes the handshake operation
@@ -546,15 +568,11 @@ class TransportBase(Transport):
             reconnect_timeout = self._reconnect_advice["interval"]
             if self.state == TransportState.CONNECTING:
                 self._state = TransportState.CONNECTED
-                self._connected_event.set()
-                self._connecting_event.clear()
         except Exception as error:  # pylint: disable=broad-except
             result = error
             reconnect_timeout = self._reconnect_timeout
             if self.state == TransportState.CONNECTED:
                 self._state = TransportState.CONNECTING
-                self._connecting_event.set()
-                self._connected_event.clear()
 
         LOGGER.debug("Connect task finished with: %r", result)
 

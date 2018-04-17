@@ -932,8 +932,6 @@ class TestTransportBase(TestCase):
         await asyncio.wait([task])
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTING
-        self.transport._connecting_event.set()
-        self.transport._connected_event.clear()
         self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
@@ -949,8 +947,6 @@ class TestTransportBase(TestCase):
             ["DEBUG:{}:{}".format(TransportBase.__module__, log_message)])
         self.transport._follow_advice.assert_called_with(1)
         self.assertEqual(self.transport.state, TransportState.CONNECTED)
-        self.assertFalse(self.transport._connecting_event.is_set())
-        self.assertTrue(self.transport._connected_event.is_set())
 
     async def test_connect_done_with_error(self):
         error = RuntimeError("error")
@@ -958,8 +954,6 @@ class TestTransportBase(TestCase):
         await asyncio.wait([task])
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTED
-        self.transport._connecting_event.clear()
-        self.transport._connected_event.set()
         self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
@@ -975,8 +969,6 @@ class TestTransportBase(TestCase):
             ["DEBUG:{}:{}".format(TransportBase.__module__, log_message)])
         self.transport._follow_advice.assert_called_with(2)
         self.assertEqual(self.transport.state, TransportState.CONNECTING)
-        self.assertTrue(self.transport._connecting_event.is_set())
-        self.assertFalse(self.transport._connected_event.is_set())
 
     async def test_connect_dont_follow_advice_on_disconnecting(self):
         task = asyncio.ensure_future(self.long_task("result"))
@@ -1214,19 +1206,14 @@ class TestTransportBase(TestCase):
 
                 self.transport._send_message.assert_not_called()
 
-    async def test_wait_for_connecting(self):
-        self.transport._connecting_event.wait = mock.CoroutineMock()
+    async def test_wait_for_state(self):
+        state = TransportState.CONNECTING
+        event = self.transport._state_events[state]
+        event.wait = mock.CoroutineMock()
 
-        await self.transport.wait_for_connecting()
+        await self.transport.wait_for_state(state)
 
-        self.transport._connecting_event.wait.assert_called()
-
-    async def test_wait_for_connected(self):
-        self.transport._connected_event.wait = mock.CoroutineMock()
-
-        await self.transport.wait_for_connected()
-
-        self.transport._connected_event.wait.assert_called()
+        event.wait.assert_called()
 
     async def test_close(self):
         self.transport._close_http_session = mock.CoroutineMock()
@@ -1361,3 +1348,39 @@ class TestTransportBase(TestCase):
         ])
         self.transport._is_auth_error_message.assert_called_with(response)
         self.transport._auth.authenticate.assert_called()
+
+    def test_state_sunder(self):
+        result = self.transport._state
+
+        self.assertEqual(result, self.transport.__dict__["_state"])
+
+    def test_state_sunder_setter(self):
+        state = TransportState.CONNECTED
+        self.assertNotEqual(self.transport.__dict__["_state"], state)
+        old_state = self.transport._state
+        self.transport._set_state_event = mock.MagicMock()
+
+        self.transport._state = state
+
+        self.assertEqual(self.transport.__dict__["_state"], state)
+        self.transport._set_state_event.assert_called_with(old_state, state)
+
+    def test_set_state_event(self):
+        old_state = TransportState.DISCONNECTED
+        new_state = TransportState.CONNECTED
+        self.transport._state_events[old_state].set()
+        self.transport._state_events[new_state].clear()
+
+        self.transport._set_state_event(old_state, new_state)
+
+        self.assertFalse(self.transport._state_events[old_state].is_set())
+        self.assertTrue(self.transport._state_events[new_state].is_set())
+
+    def test_set_state_event_no_old_state(self):
+        old_state = None
+        new_state = TransportState.CONNECTED
+        self.transport._state_events[new_state].clear()
+
+        self.transport._set_state_event(old_state, new_state)
+
+        self.assertTrue(self.transport._state_events[new_state].is_set())
