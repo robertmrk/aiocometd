@@ -1,5 +1,7 @@
 """Utility functions"""
 import re
+import asyncio
+from functools import wraps
 
 
 def get_error_code(error_field):
@@ -67,3 +69,23 @@ def get_error_args(error_field):
             else:
                 result = []
     return result
+
+
+def defer(coro_func, delay=None, *, loop=None):
+    """Returns a coroutine function that will defer the call to the given
+    *coro_func* by *delay* seconds
+
+    :param asyncio.coroutine coro_func: A coroutine function
+    :param delay: Delay in seconds
+    :type delay: int, float or None
+    :param loop: An event loop
+    :type loop: asyncio.BaseEventLoop or None
+    :return: Coroutine function wrapper
+    """
+    @wraps(coro_func)
+    async def wrapper(*args, **kwargs):  # pylint: disable=missing-docstring
+        if delay:
+            await asyncio.sleep(delay, loop=loop)
+        return await coro_func(*args, **kwargs)
+
+    return wrapper

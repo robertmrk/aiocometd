@@ -1,6 +1,9 @@
-from unittest import TestCase
+import asyncio
 
-from aiocometd.utils import get_error_message, get_error_code, get_error_args
+from asynctest import TestCase, mock
+
+from aiocometd.utils import get_error_message, get_error_code, get_error_args,\
+    defer
 
 
 class TestGetErrorCode(TestCase):
@@ -119,3 +122,66 @@ class TestGetErrorArgs(TestCase):
         result = get_error_args(error_field)
 
         self.assertEqual(result, [])
+
+
+class TestDefer(TestCase):
+    def setUp(self):
+        async def coro_func(value):
+            return value
+
+        self.coro_func = coro_func
+
+    @mock.patch("aiocometd.utils.asyncio.sleep")
+    async def test_defer(self, sleep):
+        argument = object()
+        delay = 10
+        wrapper = defer(self.coro_func, delay, loop=self.loop)
+
+        result = await wrapper(argument)
+
+        self.assertIs(result, argument)
+        sleep.assert_called_with(delay, loop=self.loop)
+
+    @mock.patch("aiocometd.utils.asyncio.sleep")
+    async def test_defer_no_loop(self, sleep):
+        argument = object()
+        delay = 10
+        wrapper = defer(self.coro_func, delay)
+
+        result = await wrapper(argument)
+
+        self.assertIs(result, argument)
+        sleep.assert_called_with(delay, loop=None)
+
+    @mock.patch("aiocometd.utils.asyncio.sleep")
+    async def test_defer_none_delay(self, sleep):
+        argument = object()
+        wrapper = defer(self.coro_func)
+
+        result = await wrapper(argument)
+
+        self.assertIs(result, argument)
+        sleep.assert_not_called()
+
+    @mock.patch("aiocometd.utils.asyncio.sleep")
+    async def test_defer_zero_delay(self, sleep):
+        argument = object()
+        delay = 0
+        wrapper = defer(self.coro_func, delay)
+
+        result = await wrapper(argument)
+
+        self.assertIs(result, argument)
+        sleep.assert_not_called()
+
+    @mock.patch("aiocometd.utils.asyncio.sleep")
+    async def test_defer_sleep_canceled(self, sleep):
+        argument = object()
+        delay = 10
+        wrapper = defer(self.coro_func, delay)
+        sleep.side_effect = asyncio.CancelledError()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await wrapper(argument)
+
+        sleep.assert_called_with(delay, loop=None)

@@ -632,8 +632,7 @@ class TestTransportBase(TestCase):
         self.assertEqual(message["field"], "value")
         self.transport._send_payload_with_auth.assert_called_with([message])
 
-    @mock.patch("aiocometd.transports.base.asyncio.sleep")
-    async def test_handshake(self, sleep):
+    async def test_handshake(self):
         connection_types = [ConnectionType.WEBSOCKET]
         response = {
             "clientId": "id1",
@@ -650,10 +649,9 @@ class TestTransportBase(TestCase):
         }
         self.transport._subscribe_on_connect = False
 
-        result = await self.transport._handshake(connection_types)
+        result = await self.transport.handshake(connection_types)
 
         self.assertEqual(result, response)
-        sleep.assert_not_called()
         final_connection_types = [ConnectionType.WEBSOCKET.value,
                                   self.transport.connection_type.value]
         self.transport._send_message.assert_called_with(
@@ -662,8 +660,7 @@ class TestTransportBase(TestCase):
         self.assertEqual(self.transport.client_id, response["clientId"])
         self.assertTrue(self.transport._subscribe_on_connect)
 
-    @mock.patch("aiocometd.transports.base.asyncio.sleep")
-    async def test_handshake_failure(self, sleep):
+    async def test_handshake_failure(self):
         connection_types = [ConnectionType.WEBSOCKET]
         response = {
             "clientId": "id1",
@@ -680,10 +677,9 @@ class TestTransportBase(TestCase):
         }
         self.transport._subscribe_on_connect = False
 
-        result = await self.transport._handshake(connection_types, 5)
+        result = await self.transport.handshake(connection_types)
 
         self.assertEqual(result, response)
-        sleep.assert_called_with(5, loop=self.loop)
         final_connection_types = [ConnectionType.WEBSOCKET.value,
                                   self.transport.connection_type.value]
         self.transport._send_message.assert_called_with(
@@ -691,16 +687,6 @@ class TestTransportBase(TestCase):
             supportedConnectionTypes=final_connection_types)
         self.assertEqual(self.transport.client_id, None)
         self.assertFalse(self.transport._subscribe_on_connect)
-
-    async def test_public_handshake(self):
-        self.transport._handshake = mock.CoroutineMock(return_value="result")
-        connection_types = ["type1"]
-
-        result = await self.transport.handshake(connection_types)
-
-        self.assertEqual(result, "result")
-        self.transport._handshake.assert_called_with(connection_types,
-                                                     delay=None)
 
     def test_subscriptions(self):
         self.assertIs(self.transport.subscriptions,
@@ -710,8 +696,7 @@ class TestTransportBase(TestCase):
         with self.assertRaises(AttributeError):
             self.transport.subscriptions = {"channel1", "channel2"}
 
-    @mock.patch("aiocometd.transports.base.asyncio.sleep")
-    async def test__connect(self, sleep):
+    async def test__connect(self):
         self.transport._subscribe_on_connect = False
         response = {
             "channel": MetaChannel.CONNECT,
@@ -725,27 +710,6 @@ class TestTransportBase(TestCase):
         result = await self.transport._connect()
 
         self.assertEqual(result, response)
-        sleep.assert_not_called()
-        self.transport._send_payload_with_auth.assert_called_with(
-            [CONNECT_MESSAGE])
-        self.assertFalse(self.transport._subscribe_on_connect)
-
-    @mock.patch("aiocometd.transports.base.asyncio.sleep")
-    async def test__connect_with_delay(self, sleep):
-        self.transport._subscribe_on_connect = False
-        response = {
-            "channel": MetaChannel.CONNECT,
-            "successful": True,
-            "advice": {"interval": 0, "reconnect": "retry"},
-            "id": "2"
-        }
-        self.transport._send_payload_with_auth = \
-            mock.CoroutineMock(return_value=response)
-
-        result = await self.transport._connect(5)
-
-        self.assertEqual(result, response)
-        sleep.assert_called_with(5, loop=self.transport._loop)
         self.transport._send_payload_with_auth.assert_called_with(
             [CONNECT_MESSAGE])
         self.assertFalse(self.transport._subscribe_on_connect)
@@ -978,44 +942,52 @@ class TestTransportBase(TestCase):
             ["DEBUG:{}:{}".format(TransportBase.__module__, log_message)])
         self.transport._follow_advice.assert_not_called()
 
-    def test_follow_advice_handshake(self):
+    @mock.patch("aiocometd.transports.base.defer")
+    def test_follow_advice_handshake(self, defer):
         self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "handshake"
         }
-        self.transport._handshake = mock.MagicMock(return_value=object())
+        self.transport.handshake = mock.MagicMock(return_value=object())
         self.transport._connect = mock.MagicMock(return_value=object())
         self.transport._start_connect_task = mock.MagicMock()
+        defer.return_value = mock.MagicMock(return_value=object())
 
         self.transport._follow_advice(5)
 
-        self.transport._handshake.assert_called_with(
-            [self.transport.connection_type],
-            delay=5
-        )
+        defer.assert_called_with(self.transport.handshake,
+                                 delay=5,
+                                 loop=self.transport._loop)
+        defer.return_value.assert_called_with([self.transport.connection_type])
         self.transport._connect.assert_not_called()
         self.transport._start_connect_task.assert_called_with(
-            self.transport._handshake.return_value
+            defer.return_value.return_value
         )
 
-    def test_follow_advice_retry(self):
+    @mock.patch("aiocometd.transports.base.defer")
+    def test_follow_advice_retry(self, defer):
         self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
         }
-        self.transport._handshake = mock.MagicMock(return_value=object())
+        self.transport.handshake = mock.MagicMock(return_value=object())
         self.transport._connect = mock.MagicMock(return_value=object())
         self.transport._start_connect_task = mock.MagicMock()
+        defer.return_value = mock.MagicMock(return_value=object())
 
         self.transport._follow_advice(5)
 
-        self.transport._handshake.assert_not_called()
-        self.transport._connect.assert_called_with(delay=5)
+        defer.assert_called_with(self.transport._connect,
+                                 delay=5,
+                                 loop=self.transport._loop)
+        defer.return_value.assert_called()
+        self.transport.handshake.assert_not_called()
         self.transport._start_connect_task.assert_called_with(
-            self.transport._connect.return_value
+            defer.return_value.return_value
         )
 
-    def test_follow_advice_none(self):
+    @mock.patch("aiocometd.transports.base.defer")
+    def test_follow_advice_none(self, defer):
         advices = ["none", "", None]
         for advice in advices:
             self.transport._state = TransportState.CONNECTED
@@ -1023,9 +995,10 @@ class TestTransportBase(TestCase):
                 "interval": 1,
                 "reconnect": advice
             }
-            self.transport._handshake = mock.MagicMock(return_value=object())
+            self.transport.handshake = mock.MagicMock(return_value=object())
             self.transport._connect = mock.MagicMock(return_value=object())
             self.transport._start_connect_task = mock.MagicMock()
+            defer.return_value = mock.MagicMock()
 
             with self.assertLogs(TransportBase.__module__, "DEBUG") as log:
                 self.transport._follow_advice(5)
@@ -1034,7 +1007,8 @@ class TestTransportBase(TestCase):
                              ["WARNING:{}:No reconnect "
                               "advice provided, no more operations will be "
                               "scheduled.".format(TransportBase.__module__)])
-            self.transport._handshake.assert_not_called()
+            defer.assert_not_called()
+            self.transport.handshake.assert_not_called()
             self.transport._connect.assert_not_called()
             self.transport._start_connect_task.assert_not_called()
             self.assertEqual(self.transport.state,

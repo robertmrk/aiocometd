@@ -12,7 +12,7 @@ from .constants import MetaChannel, TransportState, META_CHANNEL_PREFIX, \
     SERVICE_CHANNEL_PREFIX, HANDSHAKE_MESSAGE, CONNECT_MESSAGE, \
     DISCONNECT_MESSAGE, SUBSCRIBE_MESSAGE, UNSUBSCRIBE_MESSAGE, \
     PUBLISH_MESSAGE
-from ..utils import get_error_code
+from ..utils import get_error_code, defer
 from ..exceptions import TransportInvalidOperation, TransportError
 
 
@@ -183,20 +183,6 @@ class TransportBase(Transport):
         :rtype: dict
         :raises TransportError: When the network request fails.
         """
-        return await self._handshake(connection_types, delay=None)
-
-    async def _handshake(self, connection_types, delay=None):
-        """Executes the handshake operation
-
-        :param list[ConnectionType] connection_types: list of connection types
-        :param delay: Initial connection delay
-        :type delay: None or int or float
-        :return: Handshake response
-        :rtype: dict
-        :raises TransportError: When the network request fails.
-        """
-        if delay:
-            await asyncio.sleep(delay, loop=self._loop)
         # reset message id for a new client session
         self._message_id = 0
 
@@ -531,17 +517,13 @@ class TransportBase(Transport):
         self._state = TransportState.CONNECTING
         return await self._start_connect_task(self._connect())
 
-    async def _connect(self, delay=None):
+    async def _connect(self):
         """Connect to the server
 
-        :param delay: Initial connection delay
-        :type delay: None or int or float
         :return: Connect response
         :rtype: dict
         :raises TransportError: When the network request fails.
         """
-        if delay:
-            await asyncio.sleep(delay, loop=self._loop)
         message = CONNECT_MESSAGE.copy()
         payload = [message]
         if self._subscribe_on_connect and self.subscriptions:
@@ -557,7 +539,7 @@ class TransportBase(Transport):
         """Consume the result of the *future* and follow the server's \
         connection advice if the transport is still connected
 
-        :param asyncio.Future future: A :obj:`_connect` or :obj:`_handshake` \
+        :param asyncio.Future future: A :obj:`_connect` or :obj:`handshake` \
         future
         """
         try:
@@ -579,23 +561,29 @@ class TransportBase(Transport):
     def _follow_advice(self, reconnect_timeout):
         """Follow the server's reconnect advice
 
-        Either a :obj:`_connect` or :obj:`_handshake` operation is started
+        Either a :obj:`_connect` or :obj:`handshake` operation is started
         based on the advice or the method returns without starting any
         operation if no advice is provided.
 
         :param reconnect_timeout: Initial connection delay to pass to \
-        :obj:`_connect` or :obj:`_handshake`.
+        :obj:`_connect` or :obj:`handshake`.
         """
         advice = self._reconnect_advice.get("reconnect")
+
         # do a handshake operation if advised
         if advice == "handshake":
-            self._start_connect_task(
-                self._handshake([self.connection_type],
-                                delay=reconnect_timeout)
-            )
+            handshake_coro = defer(self.handshake,
+                                   delay=reconnect_timeout,
+                                   loop=self._loop)
+            self._start_connect_task(handshake_coro([self.connection_type]))
+
         # do a connect operation if advised
         elif advice == "retry":
-            self._start_connect_task(self._connect(delay=reconnect_timeout))
+            connect_coro = defer(self._connect,
+                                 delay=reconnect_timeout,
+                                 loop=self._loop)
+            self._start_connect_task(connect_coro())
+
         # there is not reconnect advice from the server or its value
         # is none
         else:
