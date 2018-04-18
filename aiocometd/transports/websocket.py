@@ -1,6 +1,7 @@
 """Websocket transport class definition"""
 import asyncio
 import logging
+from contextlib import suppress
 
 import aiohttp
 
@@ -30,7 +31,8 @@ class WebSocketFactory:  # pylint: disable=too-few-public-methods
 
     async def close(self):
         """Close the factory"""
-        await self._exit()
+        with suppress(Exception):
+            await self._exit()
 
     async def __call__(self, *args, **kwargs):
         """Create a new factory object or returns a previously created one

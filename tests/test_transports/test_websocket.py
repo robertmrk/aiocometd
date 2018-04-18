@@ -48,6 +48,13 @@ class TestWebSocketFactory(TestCase):
 
         self.factory._exit.assert_called()
 
+    async def test_close_supresses_errors(self):
+        self.factory._exit = mock.CoroutineMock(side_effect=AttributeError())
+
+        await self.factory.close()
+
+        self.factory._exit.assert_called()
+
     async def test_call_socket_creates_socket(self):
         self.factory._enter = mock.CoroutineMock()
         args = [object()]
