@@ -2,86 +2,81 @@ from asynctest import TestCase, mock
 
 from aiohttp import client_exceptions, WSMsgType
 
-from aiocometd.transports.websocket import WebSocketTransport, _WebSocket
+from aiocometd.transports.websocket import WebSocketTransport, WebSocketFactory
 from aiocometd.transports.constants import ConnectionType, MetaChannel
 from aiocometd.exceptions import TransportConnectionClosed, TransportError
 
 
-class TestWebSocket(TestCase):
+class TestWebSocketFactory(TestCase):
     def setUp(self):
         self.session = mock.CoroutineMock()
         self.session_factory = mock.CoroutineMock(return_value=self.session)
         self.url = "http://example.com/"
-        self.websocket = _WebSocket(self.session_factory, self.url)
+        self.factory = WebSocketFactory(self.session_factory)
 
     async def test_enter(self):
         socket = object()
         context = mock.MagicMock()
         context.__aenter__ = mock.CoroutineMock(return_value=socket)
         self.session.ws_connect.return_value = context
+        args = [object()]
+        kwargs = {"key": "value"}
 
-        await self.websocket._enter()
+        await self.factory._enter(*args, **kwargs)
 
-        self.session.ws_connect.assert_called_with(
-            self.url,
-            headers=self.websocket._headers
-        )
-        self.assertEqual(self.websocket._context, context)
-        self.assertEqual(self.websocket._socket, socket)
+        self.session.ws_connect.assert_called_with(*args, **kwargs)
+        self.assertEqual(self.factory._context, context)
+        self.assertEqual(self.factory._socket, socket)
 
     async def test_exit(self):
         socket = object()
         context = mock.MagicMock()
         context.__aexit__ = mock.CoroutineMock(return_value=socket)
-        self.websocket._context = context
-        self.websocket._socket = socket
+        self.factory._context = context
+        self.factory._socket = socket
 
-        await self.websocket._exit()
+        await self.factory._exit()
 
         context.__aexit__.assert_called()
-        self.assertIsNone(self.websocket._context)
-        self.assertIsNone(self.websocket._socket)
+        self.assertIsNone(self.factory._context)
+        self.assertIsNone(self.factory._socket)
 
     async def test_close(self):
-        self.websocket._exit = mock.CoroutineMock()
+        self.factory._exit = mock.CoroutineMock()
 
-        await self.websocket.close()
+        await self.factory.close()
 
-        self.websocket._exit.assert_called()
+        self.factory._exit.assert_called()
 
-    async def test_get_socket_creates_socket(self):
-        self.websocket._enter = mock.CoroutineMock()
-        headers = {}
+    async def test_call_socket_creates_socket(self):
+        self.factory._enter = mock.CoroutineMock()
+        args = [object()]
+        kwargs = {"key": "value"}
 
-        await self.websocket.get_socket(headers)
+        await self.factory(*args, **kwargs)
 
-        self.websocket._enter.assert_called()
-        self.assertIs(self.websocket._headers, headers)
+        self.factory._enter.assert_called_with(*args, **kwargs)
 
-    async def test_get_socket_returns_open_socket(self):
-        self.websocket._enter = mock.CoroutineMock()
+    async def test_call_socket_returns_open_socket(self):
+        self.factory._enter = mock.CoroutineMock()
         socket = mock.MagicMock()
         socket.closed = False
-        self.websocket._socket = socket
-        headers = {}
+        self.factory._socket = socket
 
-        result = await self.websocket.get_socket(headers)
+        result = await self.factory()
 
         self.assertEqual(result, socket)
-        self.websocket._enter.assert_not_called()
-        self.assertIs(self.websocket._headers, headers)
+        self.factory._enter.assert_not_called()
 
-    async def test_get_socket_creates_new_if_closed(self):
-        self.websocket._exit = mock.CoroutineMock()
+    async def test_call_socket_creates_new_if_closed(self):
+        self.factory._exit = mock.CoroutineMock()
         socket = mock.MagicMock()
         socket.closed = True
-        self.websocket._socket = socket
-        headers = {}
+        self.factory._socket = socket
 
-        await self.websocket.get_socket(headers)
+        await self.factory()
 
-        self.websocket._exit.assert_called()
-        self.assertIs(self.websocket._headers, headers)
+        self.factory._exit.assert_called()
 
 
 class TestWebSocketTransport(TestCase):
@@ -98,8 +93,7 @@ class TestWebSocketTransport(TestCase):
         channel = "/test/channel"
         self.assertNotIn(channel, self.transport._connect_task_channels)
         expected_socket = object()
-        self.transport._websocket = mock.MagicMock()
-        self.transport._websocket.get_socket = mock.CoroutineMock(
+        self.transport._websocket = mock.CoroutineMock(
             return_value=expected_socket
         )
         headers = object()
@@ -107,14 +101,17 @@ class TestWebSocketTransport(TestCase):
         result = await self.transport._get_socket(channel, headers)
 
         self.assertIs(result, expected_socket)
-        self.transport._websocket.get_socket.assert_called_with(headers)
+        self.transport._websocket.assert_called_with(
+            self.transport._endpoint,
+            ssl=self.transport.ssl,
+            headers=headers
+        )
 
     async def test_get_socket_for_long_duration_request(self):
         channel = MetaChannel.CONNECT
         self.assertIn(channel, self.transport._connect_task_channels)
         expected_socket = object()
-        self.transport._connect_websocket = mock.MagicMock()
-        self.transport._connect_websocket.get_socket = mock.CoroutineMock(
+        self.transport._connect_websocket = mock.CoroutineMock(
             return_value=expected_socket
         )
         headers = object()
@@ -122,8 +119,11 @@ class TestWebSocketTransport(TestCase):
         result = await self.transport._get_socket(channel, headers)
 
         self.assertIs(result, expected_socket)
-        self.transport._connect_websocket.get_socket.assert_called_with(
-            headers)
+        self.transport._connect_websocket.assert_called_with(
+            self.transport._endpoint,
+            ssl=self.transport.ssl,
+            headers=headers
+        )
 
     def test_get_lock_for_short_request(self):
         channel = "/test/channel"
@@ -216,7 +216,7 @@ class TestWebSocketTransport(TestCase):
 
         with self.assertRaisesRegex(TransportConnectionClosed,
                                     "Received CLOSE message on the "
-                                    "websocket."):
+                                    "factory."):
             await self.transport._send_socket_payload(socket, payload)
 
         socket.send_json.assert_called_with(payload)
