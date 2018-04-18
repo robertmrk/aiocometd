@@ -29,6 +29,11 @@ class Transport(ABC):
     def subscriptions(self):
         """Set of subscribed channels"""
 
+    @property
+    @abstractmethod
+    def last_connect_result(self):
+        """Result of the last connect request"""
+
     @abstractmethod
     async def handshake(self, connection_types):
         """Executes the handshake operation
@@ -58,7 +63,8 @@ class Transport(ABC):
     async def disconnect(self):
         """Disconnect from server
 
-        :raises TransportError: When the network request fails.
+        The disconnect message is only sent to the server if the transport is
+        actually connected.
         """
 
     @abstractmethod

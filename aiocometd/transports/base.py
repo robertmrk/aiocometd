@@ -3,6 +3,7 @@ import asyncio
 import logging
 from http import HTTPStatus
 from abc import abstractmethod
+from contextlib import suppress
 
 import aiohttp
 
@@ -12,7 +13,7 @@ from .constants import MetaChannel, TransportState, META_CHANNEL_PREFIX, \
     DISCONNECT_MESSAGE, SUBSCRIBE_MESSAGE, UNSUBSCRIBE_MESSAGE, \
     PUBLISH_MESSAGE
 from ..utils import get_error_code
-from ..exceptions import TransportInvalidOperation
+from ..exceptions import TransportInvalidOperation, TransportError
 
 
 LOGGER = logging.getLogger(__name__)
@@ -131,6 +132,13 @@ class TransportBase(Transport):
     def subscriptions(self):
         """Set of subscribed channels"""
         return self._subscriptions
+
+    @property
+    def last_connect_result(self):
+        """Result of the last connect request"""
+        if self._connect_task and self._connect_task.done():
+            return self._connect_task.result()
+        return None
 
     @property
     def state(self):
@@ -391,7 +399,7 @@ class TransportBase(Transport):
         # and treat FORBIDDEN also as a potential auth error
         return error_code in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN)
 
-    def _consume_message(self, response_message):
+    async def _consume_message(self, response_message):
         """Enqueue the *response_message* for consumers if it's a type of
         message that consumers should receive
 
@@ -399,7 +407,7 @@ class TransportBase(Transport):
         """
         if (self._is_server_error_message(response_message) or
                 self._is_event_message(response_message)):
-            self._enqueue_message(response_message)
+            await self.incoming_queue.put(response_message)
 
     def _update_subscriptions(self, response_message):
         """Update the set of subscriptions based on the *response_message*
@@ -473,20 +481,8 @@ class TransportBase(Transport):
                 result = message
                 continue
 
-            self._consume_message(message)
+            await self._consume_message(message)
         return result
-
-    def _enqueue_message(self, message):
-        """Enqueue *message* for consumers or drop the message if the queue \
-        is full
-
-        :param message: A response message
-        """
-        try:
-            self.incoming_queue.put_nowait(message)
-        except asyncio.QueueFull:
-            LOGGER.warning("Incoming message queue is full, "
-                           "dropping message: %r", message)
 
     def _start_connect_task(self, coro):
         """Wrap the *coro* in a future and schedule it
@@ -527,7 +523,8 @@ class TransportBase(Transport):
             raise TransportInvalidOperation(
                 "Can't connect to the server without a client id. "
                 "Do a handshake first.")
-        if self.state != TransportState.DISCONNECTED:
+        if self.state not in [TransportState.DISCONNECTED,
+                              TransportState.SERVER_DISCONNECTED]:
             raise TransportInvalidOperation(
                 "Can't connect to a server without disconnecting first.")
 
@@ -604,22 +601,23 @@ class TransportBase(Transport):
         else:
             LOGGER.warning("No reconnect advice provided, no more operations "
                            "will be scheduled.")
-            # if there is a finished connect taks enqueue its result
-            # since it's a server error that should be handled by the
-            # consumer
-            if self._connect_task and self._connect_task.done():
-                self._enqueue_message(self._connect_task.result())
-            self._state = TransportState.DISCONNECTED
+            self._state = TransportState.SERVER_DISCONNECTED
 
     async def disconnect(self):
         """Disconnect from server
 
-        :raises TransportError: When the network request fails.
+        The disconnect message is only sent to the server if the transport is
+        actually connected.
         """
         try:
+            should_send_message = self.state == TransportState.CONNECTED
+
             self._state = TransportState.DISCONNECTING
             await self._stop_connect_task()
-            await self._send_message(DISCONNECT_MESSAGE.copy())
+
+            if should_send_message:
+                with suppress(TransportError):
+                    await self._send_message(DISCONNECT_MESSAGE.copy())
         finally:
             self._state = TransportState.DISCONNECTED
 

@@ -8,7 +8,7 @@ from aiocometd.transports.constants import ConnectionType, MetaChannel, \
     TransportState, SERVICE_CHANNEL_PREFIX, CONNECT_MESSAGE, \
     SUBSCRIBE_MESSAGE, DISCONNECT_MESSAGE, PUBLISH_MESSAGE, UNSUBSCRIBE_MESSAGE
 from aiocometd.extensions import Extension, AuthExtension
-from aiocometd.exceptions import TransportInvalidOperation
+from aiocometd.exceptions import TransportInvalidOperation, TransportError
 
 
 class TransportBaseImpl(TransportBase):
@@ -344,44 +344,47 @@ class TestTransportBase(TestCase):
         self.assert_event_message_for_channel(channel, False, False)
         self.assert_event_message_for_channel(channel, True, False)
 
-    def test_consume_message(self):
+    async def test_consume_message(self):
         self.transport._is_event_message = mock.MagicMock(return_value=False)
         self.transport._is_server_error_message = \
             mock.MagicMock(return_value=False)
-        self.transport._enqueue_message = mock.MagicMock()
+        self.transport.incoming_queue = mock.MagicMock()
+        self.transport.incoming_queue.put = mock.CoroutineMock()
         response_message = object()
 
-        self.transport._consume_message(response_message)
+        await self.transport._consume_message(response_message)
 
         self.transport._is_server_error_message.assert_called_with(
             response_message)
         self.transport._is_event_message.assert_called_with(response_message)
-        self.transport._enqueue_message.assert_not_called()
+        self.transport.incoming_queue.put.assert_not_called()
 
-    def test_consume_message_event_message(self):
+    async def test_consume_message_event_message(self):
         self.transport._is_event_message = mock.MagicMock(return_value=True)
         self.transport._is_server_error_message = \
             mock.MagicMock(return_value=False)
-        self.transport._enqueue_message = mock.MagicMock()
+        self.transport.incoming_queue = mock.MagicMock()
+        self.transport.incoming_queue.put = mock.CoroutineMock()
         response_message = object()
 
-        self.transport._consume_message(response_message)
+        await self.transport._consume_message(response_message)
 
         self.transport._is_event_message.assert_called_with(response_message)
-        self.transport._enqueue_message.assert_called_with(response_message)
+        self.transport.incoming_queue.put.assert_called_with(response_message)
 
-    def test_consume_message_server_error_message(self):
+    async def test_consume_message_server_error_message(self):
         self.transport._is_event_message = mock.MagicMock(return_value=False)
         self.transport._is_server_error_message = \
             mock.MagicMock(return_value=True)
-        self.transport._enqueue_message = mock.MagicMock()
+        self.transport.incoming_queue = mock.MagicMock()
+        self.transport.incoming_queue.put = mock.CoroutineMock()
         response_message = object()
 
-        self.transport._consume_message(response_message)
+        await self.transport._consume_message(response_message)
 
         self.transport._is_server_error_message.assert_called_with(
             response_message)
-        self.transport._enqueue_message.assert_called_with(response_message)
+        self.transport.incoming_queue.put.assert_called_with(response_message)
 
     def test_update_subscriptions_new_subscription_success(self):
         response_message = {
@@ -596,7 +599,7 @@ class TestTransportBase(TestCase):
         self.transport._update_subscriptions = mock.MagicMock()
         self.transport._is_matching_response = \
             mock.MagicMock(return_value=False)
-        self.transport._consume_message = mock.MagicMock()
+        self.transport._consume_message = mock.CoroutineMock()
         self.transport._process_incoming_payload = mock.CoroutineMock()
 
         result = await self.transport._consume_payload(
@@ -610,39 +613,6 @@ class TestTransportBase(TestCase):
         self.transport._consume_message.assert_called_with(payload[0])
         self.transport._process_incoming_payload.assert_called_with(payload,
                                                                     None)
-
-    def test_enqueu_message(self):
-        self.transport.incoming_queue = mock.MagicMock()
-        self.transport.incoming_queue.put_nowait = mock.CoroutineMock()
-        message = {
-            "channel": "/test/channel1",
-            "data": {"key": "value"},
-            "id": "1"
-        }
-
-        self.transport._enqueue_message(message)
-
-        self.transport.incoming_queue.put_nowait.assert_called_with(message)
-
-    async def test_enqueu_message_queue_full(self):
-        self.transport.incoming_queue = mock.MagicMock()
-        self.transport.incoming_queue.put_nowait = mock.MagicMock(
-            side_effect=asyncio.QueueFull()
-        )
-        message = {
-            "channel": "/test/channel1",
-            "data": {"key": "value"},
-            "id": "1"
-        }
-
-        with self.assertLogs(TransportBase.__module__, "DEBUG") as log:
-            self.transport._enqueue_message(message)
-
-        log_message = "WARNING:{}:Incoming message queue is "\
-                      "full, dropping message: {!r}"\
-            .format(TransportBase.__module__, message)
-        self.assertEqual(log.output, [log_message])
-        self.transport.incoming_queue.put_nowait.assert_called_with(message)
 
     async def test_send_message(self):
         message = {
@@ -895,7 +865,8 @@ class TestTransportBase(TestCase):
         }
         self.transport._connect = mock.CoroutineMock(return_value=response)
         for state in TransportState:
-            if state != TransportState.DISCONNECTED:
+            if state not in [TransportState.DISCONNECTED,
+                             TransportState.SERVER_DISCONNECTED]:
                 self.transport._state = state
                 with self.assertRaisesRegex(TransportInvalidOperation,
                                             "Can't connect to a server "
@@ -921,6 +892,23 @@ class TestTransportBase(TestCase):
         self.transport._connect = mock.CoroutineMock(return_value=response)
         self.transport._connect_done = mock.MagicMock()
         self.transport._state = TransportState.DISCONNECTED
+
+        result = await self.transport.connect()
+
+        self.assertEqual(result, response)
+        self.assertEqual(self.transport.state, TransportState.CONNECTING)
+
+    async def test_connect_in_server_disconnected_state(self):
+        self.transport._client_id = "id"
+        response = {
+            "channel": MetaChannel.CONNECT,
+            "successful": True,
+            "advice": {"interval": 0, "reconnect": "retry"},
+            "id": "2"
+        }
+        self.transport._connect = mock.CoroutineMock(return_value=response)
+        self.transport._connect_done = mock.MagicMock()
+        self.transport._state = TransportState.SERVER_DISCONNECTED
 
         result = await self.transport.connect()
 
@@ -1049,36 +1037,8 @@ class TestTransportBase(TestCase):
             self.transport._handshake.assert_not_called()
             self.transport._connect.assert_not_called()
             self.transport._start_connect_task.assert_not_called()
-            self.assertEqual(self.transport.state, TransportState.DISCONNECTED)
-
-    def test_follow_advice_none_with_done_task(self):
-        advices = ["none", "", None]
-        for advice in advices:
-            self.transport._state = TransportState.CONNECTED
-            self.transport._reconnect_advice = {
-                "interval": 1,
-                "reconnect": advice
-            }
-            self.transport._handshake = mock.MagicMock(return_value=object())
-            self.transport._connect = mock.MagicMock(return_value=object())
-            self.transport._start_connect_task = mock.MagicMock()
-            self.transport._connect_task = mock.MagicMock()
-            connect_result = object()
-            self.transport._connect_task.result.return_value = connect_result
-            self.transport._enqueue_message = mock.MagicMock()
-
-            with self.assertLogs(TransportBase.__module__, "DEBUG") as log:
-                self.transport._follow_advice(5)
-
-            self.assertEqual(log.output,
-                             ["WARNING:{}:No reconnect "
-                              "advice provided, no more operations will be "
-                              "scheduled.".format(TransportBase.__module__)])
-            self.transport._handshake.assert_not_called()
-            self.transport._connect.assert_not_called()
-            self.transport._start_connect_task.assert_not_called()
-            self.assertEqual(self.transport.state, TransportState.DISCONNECTED)
-            self.transport._enqueue_message.assert_called_with(connect_result)
+            self.assertEqual(self.transport.state,
+                             TransportState.SERVER_DISCONNECTED)
 
     def test_client_id(self):
         self.assertIs(self.transport.client_id,
@@ -1097,7 +1057,33 @@ class TestTransportBase(TestCase):
             self.transport.endpoint = ""
 
     async def test_disconnect(self):
-        for state in TransportState:
+        self.transport._state = TransportState.CONNECTED
+        self.transport._stop_connect_task = mock.CoroutineMock()
+        self.transport._send_message = mock.CoroutineMock()
+
+        await self.transport.disconnect()
+
+        self.assertEqual(self.transport.state, TransportState.DISCONNECTED)
+        self.transport._stop_connect_task.assert_called()
+        self.transport._send_message.assert_called_with(
+            DISCONNECT_MESSAGE)
+
+    async def test_disconnect_transport_error(self):
+        self.transport._state = TransportState.CONNECTED
+        self.transport._stop_connect_task = mock.CoroutineMock()
+        self.transport._send_message = mock.CoroutineMock(
+            side_effect=TransportError())
+
+        await self.transport.disconnect()
+
+        self.assertEqual(self.transport.state, TransportState.DISCONNECTED)
+        self.transport._stop_connect_task.assert_called()
+        self.transport._send_message.assert_called_with(
+            DISCONNECT_MESSAGE)
+
+    async def test_disconnect_if_not_connected(self):
+        for state in (s for s in TransportState
+                      if s != TransportState.CONNECTED):
             self.transport._state = state
             self.transport._stop_connect_task = mock.CoroutineMock()
             self.transport._send_message = mock.CoroutineMock()
@@ -1106,8 +1092,7 @@ class TestTransportBase(TestCase):
 
             self.assertEqual(self.transport.state, TransportState.DISCONNECTED)
             self.transport._stop_connect_task.assert_called()
-            self.transport._send_message.assert_called_with(
-                DISCONNECT_MESSAGE)
+            self.transport._send_message.assert_not_called()
 
     async def test_subscribe(self):
         for state in [TransportState.CONNECTED, TransportState.CONNECTING]:
@@ -1384,3 +1369,19 @@ class TestTransportBase(TestCase):
         self.transport._set_state_event(old_state, new_state)
 
         self.assertTrue(self.transport._state_events[new_state].is_set())
+
+    def test_last_connect_result(self):
+        self.transport._connect_task = mock.MagicMock()
+        self.transport._connect_task.done.return_value = True
+        self.transport._connect_task.result.return_value = object()
+
+        result = self.transport.last_connect_result
+
+        self.assertIs(result, self.transport._connect_task.result.return_value)
+
+    def test_last_connect_result_on_no_connect_task(self):
+        self.transport._connect_task = None
+
+        result = self.transport.last_connect_result
+
+        self.assertIsNone(result)

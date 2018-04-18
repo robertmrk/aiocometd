@@ -352,25 +352,6 @@ class TestClient(TestCase):
         self.assertTrue(self.client.closed)
         self.assertEqual(log.output, expected_log)
 
-    async def test_close_no_client_id(self):
-        self.client._closed = False
-        self.client._transport = mock.MagicMock()
-        self.client._transport.client_id = None
-        self.client._transport.disconnect = mock.CoroutineMock()
-        self.client._transport.close = mock.CoroutineMock()
-        expected_log = [
-            "INFO:aiocometd.client:Closing client...",
-            "INFO:aiocometd.client:Client closed."
-        ]
-
-        with self.assertLogs("aiocometd.client", "DEBUG") as log:
-            await self.client.close()
-
-        self.client._transport.disconnect.assert_not_called()
-        self.client._transport.close.assert_called()
-        self.assertTrue(self.client.closed)
-        self.assertEqual(log.output, expected_log)
-
     async def test_close_if_already_closed(self):
         self.client._closed = True
         self.client._transport = mock.MagicMock()
@@ -378,18 +359,11 @@ class TestClient(TestCase):
         self.client._transport.disconnect = mock.CoroutineMock()
         self.client._transport.close = mock.CoroutineMock()
 
-        expected_log = [
-            "INFO:aiocometd.client:Closing client...",
-            "INFO:aiocometd.client:Client closed."
-        ]
+        await self.client.close()
 
-        with self.assertLogs("aiocometd.client", "DEBUG") as log:
-            await self.client.close()
-
-        self.client._transport.disconnect.assert_called()
-        self.client._transport.close.assert_called()
+        self.client._transport.disconnect.assert_not_called()
+        self.client._transport.close.assert_not_called()
         self.assertTrue(self.client.closed)
-        self.assertEqual(log.output, expected_log)
 
     async def test_close_on_transport_error(self):
         self.client._closed = False
@@ -401,16 +375,15 @@ class TestClient(TestCase):
         )
         self.client._transport.close = mock.CoroutineMock()
         expected_log = ["INFO:aiocometd.client:Closing client...",
-                        "DEBUG:aiocometd.client:"
-                        "Disconnect request failed, {}".format(error),
                         "INFO:aiocometd.client:Client closed."]
 
         with self.assertLogs("aiocometd.client", "DEBUG") as log:
-            await self.client.close()
+            with self.assertRaises(TransportError, msg=str(error)):
+                await self.client.close()
 
         self.assertEqual(log.output, expected_log)
         self.client._transport.disconnect.assert_called()
-        self.client._transport.close.assert_called()
+        self.client._transport.close.assert_not_called()
         self.assertTrue(self.client.closed)
 
     async def test_subscribe(self):
@@ -814,12 +787,19 @@ class TestClient(TestCase):
         self.client._incoming_queue.get = mock.CoroutineMock(
             return_value=object()
         )
-        self.client._wait_connection_timeout = mock.CoroutineMock()
+        self.client._wait_connection_timeout = mock.MagicMock()
+        self.client._transport = mock.MagicMock()
+        self.client._transport.wait_for_state = mock.MagicMock(
+            return_value=self.long_task(None, timeout=1)
+        )
 
         result = await self.client._get_message(None)
 
         self.assertIs(result, self.client._incoming_queue.get.return_value)
         self.client._wait_connection_timeout.assert_not_called()
+        self.client._transport.wait_for_state.assert_called_with(
+            TransportState.SERVER_DISCONNECTED
+        )
 
     async def test_get_message_with_timeout_not_triggered(self):
         self.client._incoming_queue = mock.MagicMock()
@@ -830,12 +810,19 @@ class TestClient(TestCase):
         self.client._wait_connection_timeout = mock.MagicMock(
             return_value=self.long_task(None, timeout=1)
         )
+        self.client._transport = mock.MagicMock()
+        self.client._transport.wait_for_state = mock.MagicMock(
+            return_value=self.long_task(None, timeout=1)
+        )
         timeout = 2
 
         result = await self.client._get_message(timeout)
 
         self.assertIs(result, get_result)
         self.client._wait_connection_timeout.assert_called_with(timeout)
+        self.client._transport.wait_for_state.assert_called_with(
+            TransportState.SERVER_DISCONNECTED
+        )
 
     async def test_get_message_with_timeout_triggered(self):
         self.client._incoming_queue = mock.MagicMock()
@@ -846,20 +833,56 @@ class TestClient(TestCase):
         self.client._wait_connection_timeout = mock.MagicMock(
             return_value=self.long_task(None, timeout=None)
         )
+        self.client._transport = mock.MagicMock()
+        self.client._transport.wait_for_state = mock.MagicMock(
+            return_value=self.long_task(None, timeout=1)
+        )
         timeout = 2
 
         with self.assertRaises(TransportTimeoutError,
                                msg="Lost connection with the server"):
             await self.client._get_message(timeout)
 
+        self.client._incoming_queue.get.assert_called()
         self.client._wait_connection_timeout.assert_called_with(timeout)
+        self.client._transport.wait_for_state.assert_called_with(
+            TransportState.SERVER_DISCONNECTED
+        )
+
+    async def test_get_message_with_server_disconnected(self):
+        self.client._incoming_queue = mock.MagicMock()
+        get_result = object()
+        self.client._incoming_queue.get = mock.MagicMock(
+            return_value=self.long_task(get_result, timeout=1)
+        )
+        self.client._wait_connection_timeout = mock.MagicMock(
+            return_value=self.long_task(None, timeout=1)
+        )
+        self.client._transport = mock.MagicMock()
+        self.client.close = mock.CoroutineMock()
+        self.client._transport.wait_for_state = mock.MagicMock(
+            return_value=self.long_task(None, timeout=None)
+        )
+        timeout = 2
+
+        with self.assertRaises(ServerError,
+                               msg="Connection terminated by the server"):
+            await self.client._get_message(timeout)
+
+        self.client._wait_connection_timeout.assert_called_with(timeout)
+        self.client._transport.wait_for_state.assert_called_with(
+            TransportState.SERVER_DISCONNECTED
+        )
+        self.client.close.assert_called()
 
     @mock.patch("aiocometd.client.asyncio")
     async def test_get_message_cancelled(self, asyncio_mock):
         self.client._incoming_queue = mock.MagicMock()
         self.client._wait_connection_timeout = mock.MagicMock()
+        self.client._transport = mock.MagicMock()
+        self.client._transport.wait_for_state = mock.MagicMock()
         asyncio_mock.ensure_future = mock.MagicMock(
-            side_effect=[mock.MagicMock(), mock.MagicMock()]
+            side_effect=[mock.MagicMock(), mock.MagicMock(), mock.MagicMock()]
         )
         asyncio_mock.wait = mock.CoroutineMock(
             side_effect=asyncio.CancelledError()

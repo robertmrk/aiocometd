@@ -39,6 +39,8 @@ class TransportState(Enum):
     """Describes a transport object's state"""
     #: Transport is disconnected
     DISCONNECTED = auto()
+    #: Connection terminated by the server
+    SERVER_DISCONNECTED = auto()
     #: Transport is trying to establish a connection
     CONNECTING = auto()
     #: Transport is connected to the server

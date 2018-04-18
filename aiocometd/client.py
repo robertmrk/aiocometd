@@ -7,7 +7,7 @@ from contextlib import suppress
 
 from .transports import create_transport, DEFAULT_CONNECTION_TYPE, \
     ConnectionType, MetaChannel, SERVICE_CHANNEL_PREFIX, TransportState
-from .exceptions import ServerError, ClientInvalidOperation, TransportError, \
+from .exceptions import ServerError, ClientInvalidOperation, \
     TransportTimeoutError, ClientError
 
 
@@ -227,28 +227,20 @@ class Client:  # pylint: disable=too-many-instance-attributes
 
     async def close(self):
         """Disconnect from the CometD server"""
-        if self.pending_count == 0:
-            LOGGER.info("Closing client...")
-        else:
-            LOGGER.warning(
-                "Closing client while %s messages are still pending...",
-                self.pending_count)
-        try:
-            if self._transport and self._transport.client_id:
-                await self._transport.disconnect()
-
-        # Don't raise TransportError if disconnect fails. Event if the
-        # request fails, and the server doesn't gets notified about the
-        # disconnecting client, it will still close the server side session
-        # after a certain timeout. The important thing is that we did our
-        # best to notify the server.
-        except TransportError as error:
-            LOGGER.debug("Disconnect request failed, %s", error)
-        finally:
-            if self._transport:
-                await self._transport.close()
-            self._closed = True
-            LOGGER.info("Client closed.")
+        if not self.closed:
+            if self.pending_count == 0:
+                LOGGER.info("Closing client...")
+            else:
+                LOGGER.warning(
+                    "Closing client while %s messages are still pending...",
+                    self.pending_count)
+            try:
+                if self._transport:
+                    await self._transport.disconnect()
+                    await self._transport.close()
+            finally:
+                self._closed = True
+                LOGGER.info("Client closed.")
 
     async def subscribe(self, channel):
         """Subscribe to *channel*
@@ -409,32 +401,55 @@ class Client:  # pylint: disable=too-many-instance-attributes
         :rtype: dict
         :raise TransportTimeoutError: If the transport can't re-establish \
         connection with the server in :obj:`connection_timeout` time.
+        :raise ServerError: If the connection gets closed by the server.
         """
+        tasks = []
+        # task waiting on connection timeout
         if connection_timeout:
             timeout_task = asyncio.ensure_future(
                 self._wait_connection_timeout(connection_timeout),
                 loop=self._loop
             )
-            get_task = asyncio.ensure_future(self._incoming_queue.get(),
-                                             loop=self._loop)
-            try:
-                done, pending = await asyncio.wait(
-                    [timeout_task, get_task],
-                    return_when=asyncio.FIRST_COMPLETED,
-                    loop=self._loop)
+            tasks.append(timeout_task)
 
-                next(iter(pending)).cancel()
-                if get_task in done:
-                    return get_task.result()
-                else:
-                    raise TransportTimeoutError("Lost connection with the "
-                                                "server.")
-            except asyncio.CancelledError:
-                timeout_task.cancel()
-                get_task.cancel()
-                raise
-        else:
-            return await self._incoming_queue.get()
+        # task waiting on incoming messages
+        get_task = asyncio.ensure_future(self._incoming_queue.get(),
+                                         loop=self._loop)
+        tasks.append(get_task)
+
+        # task waiting on server side disconnect
+        server_disconnected_task = asyncio.ensure_future(
+            self._transport.wait_for_state(
+                TransportState.SERVER_DISCONNECTED),
+            loop=self._loop
+        )
+        tasks.append(server_disconnected_task)
+
+        try:
+            done, pending = await asyncio.wait(
+                tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+                loop=self._loop)
+
+            # cancel all pending tasks
+            for task in pending:
+                task.cancel()
+
+            # handle the completed task
+            if get_task in done:
+                return get_task.result()
+            elif server_disconnected_task in done:
+                await self.close()
+                raise ServerError("Connection terminated by the server",
+                                  self._transport.last_connect_result)
+            else:
+                raise TransportTimeoutError("Lost connection with the "
+                                            "server.")
+        except asyncio.CancelledError:
+            # cancel all tasks
+            for task in tasks:
+                task.cancel()
+            raise
 
     async def _wait_connection_timeout(self, timeout):
         """Wait for and return when the transport can't re-establish \
