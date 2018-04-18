@@ -29,7 +29,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
                                  ConnectionType.LONG_POLLING]
 
     def __init__(self, endpoint, connection_types=None, *,
-                 connection_timeout=10.0, ssl=None, prefetch_size=0,
+                 connection_timeout=10.0, ssl=None, max_pending_count=0,
                  extensions=None, auth=None, loop=None):
         """
         :param str endpoint: CometD service url
@@ -48,10 +48,11 @@ class Client:  # pylint: disable=too-many-instance-attributes
         client_reference.html#aiohttp.Fingerprint>`_ for fingerprint \
         validation, :obj:`ssl.SSLContext` for custom SSL certificate \
         validation.
-        :param int prefetch_size: The maximum number of messages to prefetch \
-        from the server. If the number of prefetched messages reach this size \
-        all following messages will be dropped until messages get consumed. \
-        If it is less than or equal to zero, the size is infinite.
+        :param int max_pending_count: The maximum number of messages to \
+        prefetch from the server. If the number of prefetched messages reach \
+        this size then the connection will be suspended, until messages are \
+        consumed. \
+        If it is less than or equal to zero, the count is infinite.
         :param extensions: List of protocol extension objects
         :type extensions: list[Extension] or None
         :param AuthExtension auth: An auth extension
@@ -83,7 +84,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         #: SSL validation mode
         self.ssl = ssl
         #: the maximum number of messages to prefetch from the server
-        self._prefetch_size = prefetch_size
+        self._max_pending_count = max_pending_count
         #: List of protocol extension objects
         self.extensions = extensions
         #: An auth extension
@@ -93,14 +94,15 @@ class Client:  # pylint: disable=too-many-instance-attributes
         """Formal string representation"""
         cls_name = type(self).__name__
         fmt_spec = "{}({}, {}, connection_timeout={}, ssl={}, " \
-                   "prefetch_size={}, extensions={}, loop={})"
+                   "max_pending_count={}, extensions={}, auth={}, loop={})"
         return fmt_spec.format(cls_name,
                                reprlib.repr(self.endpoint),
                                reprlib.repr(self._connection_types),
                                reprlib.repr(self.connection_timeout),
                                reprlib.repr(self.ssl),
-                               reprlib.repr(self._prefetch_size),
+                               reprlib.repr(self._max_pending_count),
                                reprlib.repr(self.extensions),
+                               reprlib.repr(self.auth),
                                reprlib.repr(self._loop))
 
     @property
@@ -126,6 +128,23 @@ class Client:  # pylint: disable=too-many-instance-attributes
         if self._transport is not None:
             return self._transport.connection_type
         return None
+
+    @property
+    def pending_count(self):
+        """The number of pending incoming messages
+
+        Once :obj:`open` is called the client starts listening for messages
+        from the server. The incoming messages are retrieved and stored in an
+        internal queue until they get consumed by calling :obj:`receive`.
+        """
+        if self._incoming_queue is None:
+            return 0
+        return self._incoming_queue.qsize()
+
+    @property
+    def has_pending_messages(self):
+        """Marks whether the client has any pending incoming messages"""
+        return self.pending_count > 0
 
     def _pick_connection_type(self, connection_types):
         """Pick a connection type based on the  *connection_types*
@@ -159,7 +178,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         :raise ClientError: If none of the connection types offered by the \
         server are supported
         """
-        self._incoming_queue = asyncio.Queue(maxsize=self._prefetch_size)
+        self._incoming_queue = asyncio.Queue(maxsize=self._max_pending_count)
         transport = create_transport(DEFAULT_CONNECTION_TYPE,
                                      endpoint=self.endpoint,
                                      incoming_queue=self._incoming_queue,
@@ -343,23 +362,6 @@ class Client:  # pylint: disable=too-many-instance-attributes
         else:
             raise ClientInvalidOperation("The client is closed and there are "
                                          "no pending messages.")
-
-    @property
-    def pending_count(self):
-        """The number of pending incoming messages
-
-        Once :obj:`open` is called the client starts listening for messages
-        from the server. The incoming messages are retrieved and stored in an
-        internal queue until they get consumed by calling :obj:`receive`.
-        """
-        if self._incoming_queue is None:
-            return 0
-        return self._incoming_queue.qsize()
-
-    @property
-    def has_pending_messages(self):
-        """Marks whether the client has any pending incoming messages"""
-        return self.pending_count > 0
 
     async def __aiter__(self):
         """Asynchronous iterator
