@@ -77,19 +77,20 @@ class WebSocketTransport(TransportBase):
     """WebSocket type transport"""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
         #: channels used during the connect task, requests on these channels
         #: are usually long running
-        self._connect_task_channels = (MetaChannel.HANDSHAKE,
-                                       MetaChannel.CONNECT)
-        #: factory for short duration requests
-        self._websocket = WebSocketFactory(self._get_http_session)
-        #: exclusive lock for the _websocket object
-        self._websocket_lock = asyncio.Lock()
-        #: factory for long duration requests
-        self._connect_websocket = WebSocketFactory(self._get_http_session)
-        #: exclusive lock for the _connect_websocket object
-        self._connect_websocket_lock = asyncio.Lock()
+        self._long_duration_channels = (MetaChannel.HANDSHAKE,
+                                        MetaChannel.CONNECT)
+
+        #: factory creating sockets for short duration requests
+        self._socket_factory_short = WebSocketFactory(self._get_http_session)
+        #: factory creating sockets for long duration requests
+        self._socket_factory_long = WebSocketFactory(self._get_http_session)
+
+        #: exclusive lock for the objects created by _socket_factory_short
+        self._socket_lock_short = asyncio.Lock()
+        #: exclusive lock for the objects created by _socket_factory_long
+        self._socket_lock_long = asyncio.Lock()
 
     async def _get_socket(self, channel, headers):
         """Get a websocket object for the given *channel*
@@ -105,12 +106,12 @@ class WebSocketTransport(TransportBase):
         <https://aiohttp.readthedocs.io/en/stable\
         /client_reference.html#aiohttp.ClientWebSocketResponse>`_
         """
-        if channel in self._connect_task_channels:
-            get_socket = self._connect_websocket
+        if channel in self._long_duration_channels:
+            factory = self._socket_factory_long
         else:
-            get_socket = self._websocket
+            factory = self._socket_factory_short
 
-        return await get_socket(self.endpoint, ssl=self.ssl, headers=headers)
+        return await factory(self.endpoint, ssl=self.ssl, headers=headers)
 
     def _get_socket_lock(self, channel):
         """Get an exclusive lock object for the given *channel*
@@ -119,9 +120,9 @@ class WebSocketTransport(TransportBase):
         :return: lock object for the *channel*
         :rtype: asyncio.Lock
         """
-        if channel in self._connect_task_channels:
-            return self._connect_websocket_lock
-        return self._websocket_lock
+        if channel in self._long_duration_channels:
+            return self._socket_lock_long
+        return self._socket_lock_short
 
     async def _send_final_payload(self, payload, *, headers):
         try:
@@ -178,6 +179,6 @@ class WebSocketTransport(TransportBase):
                 return matching_response
 
     async def close(self):
-        await self._websocket.close()
-        await self._connect_websocket.close()
+        await self._socket_factory_short.close()
+        await self._socket_factory_long.close()
         await super().close()

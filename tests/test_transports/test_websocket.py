@@ -91,9 +91,9 @@ class TestWebSocketTransport(TestCase):
 
     async def test_get_socket_for_short_request(self):
         channel = "/test/channel"
-        self.assertNotIn(channel, self.transport._connect_task_channels)
+        self.assertNotIn(channel, self.transport._long_duration_channels)
         expected_socket = object()
-        self.transport._websocket = mock.CoroutineMock(
+        self.transport._socket_factory_short = mock.CoroutineMock(
             return_value=expected_socket
         )
         headers = object()
@@ -101,7 +101,7 @@ class TestWebSocketTransport(TestCase):
         result = await self.transport._get_socket(channel, headers)
 
         self.assertIs(result, expected_socket)
-        self.transport._websocket.assert_called_with(
+        self.transport._socket_factory_short.assert_called_with(
             self.transport._endpoint,
             ssl=self.transport.ssl,
             headers=headers
@@ -109,9 +109,9 @@ class TestWebSocketTransport(TestCase):
 
     async def test_get_socket_for_long_duration_request(self):
         channel = MetaChannel.CONNECT
-        self.assertIn(channel, self.transport._connect_task_channels)
+        self.assertIn(channel, self.transport._long_duration_channels)
         expected_socket = object()
-        self.transport._connect_websocket = mock.CoroutineMock(
+        self.transport._socket_factory_long = mock.CoroutineMock(
             return_value=expected_socket
         )
         headers = object()
@@ -119,7 +119,7 @@ class TestWebSocketTransport(TestCase):
         result = await self.transport._get_socket(channel, headers)
 
         self.assertIs(result, expected_socket)
-        self.transport._connect_websocket.assert_called_with(
+        self.transport._socket_factory_long.assert_called_with(
             self.transport._endpoint,
             ssl=self.transport.ssl,
             headers=headers
@@ -127,9 +127,9 @@ class TestWebSocketTransport(TestCase):
 
     def test_get_lock_for_short_request(self):
         channel = "/test/channel"
-        self.assertNotIn(channel, self.transport._connect_task_channels)
+        self.assertNotIn(channel, self.transport._long_duration_channels)
         expected_lock = object()
-        self.transport._websocket_lock = expected_lock
+        self.transport._socket_lock_short = expected_lock
 
         result = self.transport._get_socket_lock(channel)
 
@@ -137,25 +137,25 @@ class TestWebSocketTransport(TestCase):
 
     def test_get_lock_for_long_duration_request(self):
         channel = MetaChannel.CONNECT
-        self.assertIn(channel, self.transport._connect_task_channels)
+        self.assertIn(channel, self.transport._long_duration_channels)
         expected_lock = object()
-        self.transport._connect_websocket_lock = expected_lock
+        self.transport._socket_lock_long = expected_lock
 
         result = self.transport._get_socket_lock(channel)
 
         self.assertIs(result, expected_lock)
 
     async def test_close(self):
-        self.transport._websocket = mock.MagicMock()
-        self.transport._websocket.close = mock.CoroutineMock()
-        self.transport._connect_websocket = mock.MagicMock()
-        self.transport._connect_websocket.close = mock.CoroutineMock()
+        self.transport._socket_factory_short = mock.MagicMock()
+        self.transport._socket_factory_short.close = mock.CoroutineMock()
+        self.transport._socket_factory_long = mock.MagicMock()
+        self.transport._socket_factory_long.close = mock.CoroutineMock()
         self.transport._close_http_session = mock.CoroutineMock()
 
         await self.transport.close()
 
-        self.transport._websocket.close.assert_called()
-        self.transport._connect_websocket.close.assert_called()
+        self.transport._socket_factory_short.close.assert_called()
+        self.transport._socket_factory_long.close.assert_called()
         self.transport._close_http_session.assert_called()
 
     async def test_send_socket_payload_short_request(self):
