@@ -254,6 +254,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
         if self.closed:
             raise ClientInvalidOperation("Can't send subscribe request while, "
                                          "the client is closed.")
+        await self._check_server_disconnected()
+
         response = await self._transport.subscribe(channel)
         self._verify_response(response)
         LOGGER.info("Subscribed to channel %s", channel)
@@ -270,6 +272,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
         if self.closed:
             raise ClientInvalidOperation("Can't send unsubscribe request "
                                          "while, the client is closed.")
+        await self._check_server_disconnected()
+
         response = await self._transport.unsubscribe(channel)
         self._verify_response(response)
         LOGGER.info("Unsubscribed from channel %s", channel)
@@ -286,6 +290,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
         if self.closed:
             raise ClientInvalidOperation("Can't publish data while, "
                                          "the client is closed.")
+        await self._check_server_disconnected()
+
         response = await self._transport.publish(channel, data)
         self._verify_response(response)
 
@@ -439,9 +445,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
             if get_task in done:
                 return get_task.result()
             elif server_disconnected_task in done:
-                await self.close()
-                raise ServerError("Connection terminated by the server",
-                                  self._transport.last_connect_result)
+                await self._check_server_disconnected()
             else:
                 raise TransportTimeoutError("Lost connection with the "
                                             "server.")
@@ -468,3 +472,17 @@ class Client:  # pylint: disable=too-many-instance-attributes
                 )
             except asyncio.TimeoutError:
                 break
+
+    async def _check_server_disconnected(self):
+        """Checks whether the current transport'state is
+        :obj:`TransportState.SERVER_DISCONNECTED` and if it is then closes the
+        client and raises an error
+
+        :raise ServerError: If the current transport's state is \
+        :obj:`TransportState.SERVER_DISCONNECTED`
+        """
+        if (self._transport and
+                self._transport.state == TransportState.SERVER_DISCONNECTED):
+            await self.close()
+            raise ServerError("Connection closed by the server",
+                              self._transport.last_connect_result)

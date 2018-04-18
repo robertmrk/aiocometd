@@ -397,6 +397,7 @@ class TestClient(TestCase):
         self.client._transport.subscribe = mock.CoroutineMock(
             return_value=response
         )
+        self.client._check_server_disconnected = mock.CoroutineMock()
         self.client._closed = False
 
         with self.assertLogs("aiocometd.client", "DEBUG") as log:
@@ -406,14 +407,18 @@ class TestClient(TestCase):
         self.assertEqual(log.output,
                          ["INFO:aiocometd.client:Subscribed to channel {}"
                           .format("channel1")])
+        self.client._check_server_disconnected.assert_called()
 
     async def test_subscribe_on_closed(self):
         self.client._closed = True
+        self.client._check_server_disconnected = mock.CoroutineMock()
 
         with self.assertRaises(ClientInvalidOperation,
                                msg="Can't send subscribe request while, "
                                    "the client is closed."):
             await self.client.subscribe("channel1")
+
+        self.client._check_server_disconnected.assert_not_called()
 
     async def test_subscribe_error(self):
         response = {
@@ -426,6 +431,7 @@ class TestClient(TestCase):
         self.client._transport.subscribe = mock.CoroutineMock(
             return_value=response
         )
+        self.client._check_server_disconnected = mock.CoroutineMock()
         self.client._closed = False
         error = ServerError("Subscribe request failed.", response)
 
@@ -433,6 +439,7 @@ class TestClient(TestCase):
             await self.client.subscribe("channel1")
 
         self.client._transport.subscribe.assert_called_with("channel1")
+        self.client._check_server_disconnected.assert_called()
 
     async def test_unsubscribe(self):
         response = {
@@ -445,6 +452,7 @@ class TestClient(TestCase):
         self.client._transport.unsubscribe = mock.CoroutineMock(
             return_value=response
         )
+        self.client._check_server_disconnected = mock.CoroutineMock()
         self.client._closed = False
 
         with self.assertLogs("aiocometd.client", "DEBUG") as log:
@@ -454,14 +462,18 @@ class TestClient(TestCase):
         self.assertEqual(log.output,
                          ["INFO:aiocometd.client:Unsubscribed from channel {}"
                             .format("channel1")])
+        self.client._check_server_disconnected.assert_called()
 
     async def test_unsubscribe_on_closed(self):
         self.client._closed = True
+        self.client._check_server_disconnected = mock.CoroutineMock()
 
         with self.assertRaises(ClientInvalidOperation,
                                msg="Can't send unsubscribe request while, "
                                    "the client is closed."):
             await self.client.unsubscribe("channel1")
+
+        self.client._check_server_disconnected.assert_not_called()
 
     async def test_unsubscribe_error(self):
         response = {
@@ -474,6 +486,7 @@ class TestClient(TestCase):
         self.client._transport.unsubscribe = mock.CoroutineMock(
             return_value=response
         )
+        self.client._check_server_disconnected = mock.CoroutineMock()
         self.client._closed = False
         error = ServerError("Unsubscribe request failed.", response)
 
@@ -481,6 +494,7 @@ class TestClient(TestCase):
             await self.client.unsubscribe("channel1")
 
         self.client._transport.unsubscribe.assert_called_with("channel1")
+        self.client._check_server_disconnected.assert_called()
 
     async def test_publish(self):
         response = {
@@ -493,19 +507,24 @@ class TestClient(TestCase):
         self.client._transport.publish = mock.CoroutineMock(
             return_value=response
         )
+        self.client._check_server_disconnected = mock.CoroutineMock()
         self.client._closed = False
 
         await self.client.publish("channel1", data)
 
         self.client._transport.publish.assert_called_with("channel1", data)
+        self.client._check_server_disconnected.assert_called()
 
     async def test_publish_on_closed(self):
         self.client._closed = True
+        self.client._check_server_disconnected = mock.CoroutineMock()
 
         with self.assertRaises(ClientInvalidOperation,
                                msg="Can't publish data while, "
                                    "the client is closed."):
             await self.client.publish("channel1", {})
+
+        self.client._check_server_disconnected.assert_not_called()
 
     async def test_publish_error(self):
         response = {
@@ -518,6 +537,7 @@ class TestClient(TestCase):
         self.client._transport.publish = mock.CoroutineMock(
             return_value=response
         )
+        self.client._check_server_disconnected = mock.CoroutineMock()
         self.client._closed = False
         error = ServerError("Publish request failed.", response)
 
@@ -525,6 +545,7 @@ class TestClient(TestCase):
             await self.client.publish("channel1", data)
 
         self.client._transport.publish.assert_called_with("channel1", data)
+        self.client._check_server_disconnected.assert_called()
 
     def test_repr(self):
         self.client.endpoint = "http://example.com"
@@ -864,9 +885,10 @@ class TestClient(TestCase):
             return_value=self.long_task(None, timeout=None)
         )
         timeout = 2
+        self.client._transport.state = TransportState.SERVER_DISCONNECTED
 
-        with self.assertRaises(ServerError,
-                               msg="Connection terminated by the server"):
+        with self.assertRaisesRegex(ServerError,
+                                    "Connection closed by the server"):
             await self.client._get_message(timeout)
 
         self.client._wait_connection_timeout.assert_called_with(timeout)
@@ -894,3 +916,26 @@ class TestClient(TestCase):
 
         for task in asyncio_mock.ensure_future.side_effect:
             task.cancel.assert_called()
+
+    async def test_check_server_disconnected_on_disconnected(self):
+        self.client._transport = mock.MagicMock()
+        self.client._transport.state = TransportState.SERVER_DISCONNECTED
+        self.client._transport.last_connect_result = object()
+
+        with self.assertRaisesRegex(ServerError,
+                                    "Connection closed by the server") as cm:
+            await self.client._check_server_disconnected()
+
+        self.assertEqual(cm.exception.response,
+                         self.client._transport.last_connect_result)
+
+    async def test_check_server_disconnected_on_not_disconnected(self):
+        self.client._transport = mock.MagicMock()
+        self.client._transport.state = TransportState.CONNECTED
+
+        await self.client._check_server_disconnected()
+
+    async def test_check_server_disconnected_on_none_transport(self):
+        self.client._transport = None
+
+        await self.client._check_server_disconnected()
