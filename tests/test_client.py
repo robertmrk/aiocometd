@@ -186,9 +186,9 @@ class TestClient(TestCase):
         self.client.extensions = object()
         self.client.auth = object()
 
-        with self.assertRaises(ClientError,
-                               msg="None of the connection types offered "
-                                   "by the server are supported."):
+        with self.assertRaisesRegex(ClientError,
+                                    "None of the connection types offered "
+                                    "by the server are supported."):
             with self.assertLogs("aiocometd.client", "DEBUG") as log:
                 await self.client._negotiate_transport()
 
@@ -303,8 +303,8 @@ class TestClient(TestCase):
         self.client._verify_response = mock.MagicMock()
         self.client._closed = False
 
-        with self.assertRaises(ClientInvalidOperation,
-                               msg="Client is already open."):
+        with self.assertRaisesRegex(ClientInvalidOperation,
+                                    "Client is already open."):
             await self.client.open()
 
         self.client._negotiate_transport.assert_not_called()
@@ -378,7 +378,7 @@ class TestClient(TestCase):
                         "INFO:aiocometd.client:Client closed."]
 
         with self.assertLogs("aiocometd.client", "DEBUG") as log:
-            with self.assertRaises(TransportError, msg=str(error)):
+            with self.assertRaisesRegex(TransportError, str(error)):
                 await self.client.close()
 
         self.assertEqual(log.output, expected_log)
@@ -413,9 +413,9 @@ class TestClient(TestCase):
         self.client._closed = True
         self.client._check_server_disconnected = mock.CoroutineMock()
 
-        with self.assertRaises(ClientInvalidOperation,
-                               msg="Can't send subscribe request while, "
-                                   "the client is closed."):
+        with self.assertRaisesRegex(ClientInvalidOperation,
+                                    "Can't send subscribe request while, "
+                                    "the client is closed."):
             await self.client.subscribe("channel1")
 
         self.client._check_server_disconnected.assert_not_called()
@@ -435,7 +435,7 @@ class TestClient(TestCase):
         self.client._closed = False
         error = ServerError("Subscribe request failed.", response)
 
-        with self.assertRaises(ServerError, msg=str(error)):
+        with self.assertRaisesRegex(ServerError, str(error)):
             await self.client.subscribe("channel1")
 
         self.client._transport.subscribe.assert_called_with("channel1")
@@ -468,9 +468,9 @@ class TestClient(TestCase):
         self.client._closed = True
         self.client._check_server_disconnected = mock.CoroutineMock()
 
-        with self.assertRaises(ClientInvalidOperation,
-                               msg="Can't send unsubscribe request while, "
-                                   "the client is closed."):
+        with self.assertRaisesRegex(ClientInvalidOperation,
+                                    "Can't send unsubscribe request while, "
+                                    "the client is closed."):
             await self.client.unsubscribe("channel1")
 
         self.client._check_server_disconnected.assert_not_called()
@@ -490,7 +490,7 @@ class TestClient(TestCase):
         self.client._closed = False
         error = ServerError("Unsubscribe request failed.", response)
 
-        with self.assertRaises(ServerError, msg=str(error)):
+        with self.assertRaisesRegex(ServerError, str(error)):
             await self.client.unsubscribe("channel1")
 
         self.client._transport.unsubscribe.assert_called_with("channel1")
@@ -519,9 +519,9 @@ class TestClient(TestCase):
         self.client._closed = True
         self.client._check_server_disconnected = mock.CoroutineMock()
 
-        with self.assertRaises(ClientInvalidOperation,
-                               msg="Can't publish data while, "
-                                   "the client is closed."):
+        with self.assertRaisesRegex(ClientInvalidOperation,
+                                    "Can't publish data while, "
+                                    "the client is closed."):
             await self.client.publish("channel1", {})
 
         self.client._check_server_disconnected.assert_not_called()
@@ -541,7 +541,7 @@ class TestClient(TestCase):
         self.client._closed = False
         error = ServerError("Publish request failed.", response)
 
-        with self.assertRaises(ServerError, msg=str(error)):
+        with self.assertRaisesRegex(ServerError, str(error)):
             await self.client.publish("channel1", data)
 
         self.client._transport.publish.assert_called_with("channel1", data)
@@ -607,7 +607,7 @@ class TestClient(TestCase):
         error_message = \
             type(self.client)._SERVER_ERROR_MESSAGES[response["channel"]]
 
-        with self.assertRaises(ServerError, msg=error_message):
+        with self.assertRaisesRegex(ServerError, error_message):
             self.client._raise_server_error(response)
 
     def test_raise_server_error_service(self):
@@ -617,9 +617,7 @@ class TestClient(TestCase):
             "id": "1"
         }
 
-        with self.assertRaises(
-                ServerError,
-                msg="Service request failed."):
+        with self.assertRaisesRegex(ServerError, "Service request failed."):
             self.client._raise_server_error(response)
 
     def test_raise_server_error_publish(self):
@@ -629,9 +627,7 @@ class TestClient(TestCase):
             "id": "1"
         }
 
-        with self.assertRaises(
-                ServerError,
-                msg="Publish request failed."):
+        with self.assertRaisesRegex(ServerError, "Publish request failed."):
             self.client._raise_server_error(response)
 
     async def test_pending_count(self):
@@ -661,9 +657,9 @@ class TestClient(TestCase):
         self.client._closed = True
         self.client._incoming_queue = None
 
-        with self.assertRaises(ClientInvalidOperation,
-                               msg="The client is closed and there are "
-                                   "no pending messages."):
+        with self.assertRaisesRegex(ClientInvalidOperation,
+                                    "The client is closed and there are "
+                                    "no pending messages."):
             await self.client.receive()
 
     async def test_receive_on_closed_and_pending_messages(self):
@@ -860,8 +856,8 @@ class TestClient(TestCase):
         )
         timeout = 2
 
-        with self.assertRaises(TransportTimeoutError,
-                               msg="Lost connection with the server"):
+        with self.assertRaisesRegex(TransportTimeoutError,
+                                    "Lost connection with the server"):
             await self.client._get_message(timeout)
 
         self.client._incoming_queue.get.assert_called()

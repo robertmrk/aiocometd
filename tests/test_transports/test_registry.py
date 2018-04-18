@@ -36,7 +36,7 @@ class TestTransportFactoryFunctions(TestCase):
     def test_create_transport_error(self):
         connection_type = None
 
-        with self.assertRaises(TransportInvalidOperation,
-                               msg="There is no transport with "
-                                   "a name {!r}".format(connection_type)):
+        with self.assertRaisesRegex(TransportInvalidOperation,
+                                    "There is no transport for connection "
+                                    "type {!r}".format(connection_type)):
             create_transport(connection_type)

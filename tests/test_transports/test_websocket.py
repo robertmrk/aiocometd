@@ -214,8 +214,9 @@ class TestWebSocketTransport(TestCase):
             return_value=matching_response
         )
 
-        with self.assertRaises(TransportConnectionClosed,
-                               msg="Received CLOSE message on the websocket."):
+        with self.assertRaisesRegex(TransportConnectionClosed,
+                                    "Received CLOSE message on the "
+                                    "websocket."):
             await self.transport._send_socket_payload(socket, payload)
 
         socket.send_json.assert_called_with(payload)
