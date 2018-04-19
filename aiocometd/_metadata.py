@@ -1,6 +1,7 @@
 """Package metadata"""
 TITLE = "aiocometd"
 DESCRIPTION = "CometD client for asyncio"
+KEYWORDS = "asyncio aiohttp comet cometd bayeux push streaming"
 URL = ""
 VERSION = "0.1.0"
 AUTHOR = "Robert Marki"
