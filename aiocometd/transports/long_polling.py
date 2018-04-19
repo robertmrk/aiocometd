@@ -4,7 +4,7 @@ import logging
 
 import aiohttp
 
-from .constants import ConnectionType
+from ..constants import ConnectionType
 from .registry import register_transport
 from .base import TransportBase
 from ..exceptions import TransportError

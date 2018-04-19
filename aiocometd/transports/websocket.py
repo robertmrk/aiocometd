@@ -5,7 +5,7 @@ from contextlib import suppress
 
 import aiohttp
 
-from .constants import ConnectionType, MetaChannel
+from ..constants import ConnectionType, MetaChannel
 from .registry import register_transport
 from .base import TransportBase
 from ..exceptions import TransportError, TransportConnectionClosed

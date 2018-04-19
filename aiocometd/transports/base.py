@@ -1,18 +1,17 @@
 """Base transtport abstract class definition"""
 import asyncio
 import logging
-from http import HTTPStatus
 from abc import abstractmethod
 from contextlib import suppress
 
 import aiohttp
 
 from .abc import Transport
-from .constants import MetaChannel, TransportState, META_CHANNEL_PREFIX, \
-    SERVICE_CHANNEL_PREFIX, HANDSHAKE_MESSAGE, CONNECT_MESSAGE, \
-    DISCONNECT_MESSAGE, SUBSCRIBE_MESSAGE, UNSUBSCRIBE_MESSAGE, \
-    PUBLISH_MESSAGE
-from ..utils import get_error_code, defer
+from ..constants import MetaChannel, TransportState, HANDSHAKE_MESSAGE, \
+    CONNECT_MESSAGE, DISCONNECT_MESSAGE, SUBSCRIBE_MESSAGE, \
+    UNSUBSCRIBE_MESSAGE, PUBLISH_MESSAGE
+from ..utils import defer, is_matching_response, is_auth_error_message, \
+    is_server_error_message, is_event_message
 from ..exceptions import TransportInvalidOperation, TransportError
 
 
@@ -265,7 +264,7 @@ class TransportBase(Transport):
         response = await self._send_payload(payload)
 
         # if there is an auth extension and the response is an auth error
-        if self._auth and self._is_auth_error_message(response):
+        if self._auth and is_auth_error_message(response):
             # then try to authenticate and resend the payload
             await self._auth.authenticate()
             return await self._send_payload(payload)
@@ -322,77 +321,14 @@ class TransportBase(Transport):
         :raises TransportError: When the network request fails.
         """
 
-    def _is_matching_response(self, response_message, message):
-        """Check whether the *response_message* is a response for the
-        given *message*.
-
-        :param dict message: A sent message
-        :param response_message: A response message
-        :return: True if the *response_message* is a match for *message*
-                 otherwise False.
-        :rtype: bool
-        """
-        if message is None or response_message is None:
-            return False
-        # to consider a response message as a pair of the sent message
-        # their channel should match, if they contain an id field it should
-        # also match (according to the specs an id is always optional),
-        # and the response message should contain the successful field
-        return (message["channel"] == response_message["channel"] and
-                message.get("id") == response_message.get("id") and
-                "successful" in response_message)
-
-    def _is_server_error_message(self, response_message):
-        """Check whether the *response_message* is a server side error message
-
-        :param response_message: A response message
-        :return: True if the *response_message* is a server side error message
-                 otherwise False.
-        :rtype: bool
-        """
-        return (response_message["channel"] not in [MetaChannel.CONNECT,
-                                                    MetaChannel.DISCONNECT,
-                                                    MetaChannel.HANDSHAKE] and
-                not response_message.get("successful", True))
-
-    def _is_event_message(self, response_message):
-        """Check whether the *response_message* is an event message
-
-        :param response_message: A response message
-        :return: True if the *response_message* is an event message
-                 otherwise False.
-        :rtype: bool
-        """
-        channel = response_message["channel"]
-        return (not channel.startswith(META_CHANNEL_PREFIX) and
-                not channel.startswith(SERVICE_CHANNEL_PREFIX) and
-                "data" in response_message)
-
-    def _is_auth_error_message(self, response_message):
-        """Check whether the *response_message* is an authentication error
-        message
-
-        :param response_message: A response message
-        :return: True if the *response_message* is an authentication error \
-        message, otherwise False.
-        :rtype: bool
-        """
-        error_code = get_error_code(response_message.get("error"))
-        # Strictly speaking, only UNAUTHORIZED should be considered as an auth
-        # error, but some channels can also react with FORBIDDEN for auth
-        # failures. This is certainly true for /meta/handshake, and since this
-        # might happen for other channels as well, it's better to stay safe
-        # and treat FORBIDDEN also as a potential auth error
-        return error_code in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN)
-
     async def _consume_message(self, response_message):
         """Enqueue the *response_message* for consumers if it's a type of
         message that consumers should receive
 
         :param response_message: A response message
         """
-        if (self._is_server_error_message(response_message) or
-                self._is_event_message(response_message)):
+        if (is_server_error_message(response_message) or
+                is_event_message(response_message)):
             await self.incoming_queue.put(response_message)
 
     def _update_subscriptions(self, response_message):
@@ -463,7 +399,7 @@ class TransportBase(Transport):
             # set the message as the result and continue if it is a matching
             # response
             if (result is None and
-                    self._is_matching_response(message, find_response_for)):
+                    is_matching_response(message, find_response_for)):
                 result = message
                 continue
 

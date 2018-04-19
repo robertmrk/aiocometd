@@ -3,7 +3,7 @@ from asynctest import TestCase, mock
 from aiohttp import client_exceptions
 
 from aiocometd.transports.long_polling import LongPollingTransport
-from aiocometd.transports.constants import ConnectionType
+from aiocometd.constants import ConnectionType
 from aiocometd.exceptions import TransportError
 
 

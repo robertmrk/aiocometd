@@ -7,7 +7,7 @@ from asynctest import TestCase, mock
 from aiocometd.client import Client
 from aiocometd.exceptions import ServerError, ClientInvalidOperation, \
     TransportError, TransportTimeoutError, ClientError
-from aiocometd.transports.constants import DEFAULT_CONNECTION_TYPE, \
+from aiocometd.constants import DEFAULT_CONNECTION_TYPE, \
     ConnectionType, MetaChannel, SERVICE_CHANNEL_PREFIX, TransportState
 
 

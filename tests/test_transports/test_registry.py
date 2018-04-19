@@ -2,7 +2,7 @@ from asynctest import TestCase, mock
 
 from aiocometd.transports.registry import create_transport, \
     register_transport, TRANSPORT_CLASSES
-from aiocometd.transports.constants import ConnectionType
+from aiocometd.constants import ConnectionType
 from aiocometd.exceptions import TransportInvalidOperation
 
 

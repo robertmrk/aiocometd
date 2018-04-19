@@ -5,10 +5,12 @@ import logging
 from collections import abc
 from contextlib import suppress
 
-from .transports import create_transport, DEFAULT_CONNECTION_TYPE, \
-    ConnectionType, MetaChannel, SERVICE_CHANNEL_PREFIX, TransportState
+from .transports import create_transport
+from .constants import DEFAULT_CONNECTION_TYPE, ConnectionType, MetaChannel, \
+    SERVICE_CHANNEL_PREFIX, TransportState
 from .exceptions import ServerError, ClientInvalidOperation, \
     TransportTimeoutError, ClientError
+from .utils import is_server_error_message
 
 
 LOGGER = logging.getLogger(__name__)
@@ -324,7 +326,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         :param dict response: Response message
         :raise ServerError: If the *response* is not ``successful``
         """
-        if not response.get("successful", True):
+        if is_server_error_message(response):
             self._raise_server_error(response)
 
     def _raise_server_error(self, response):

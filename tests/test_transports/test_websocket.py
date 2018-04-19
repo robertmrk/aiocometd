@@ -3,7 +3,7 @@ from asynctest import TestCase, mock
 from aiohttp import client_exceptions, WSMsgType
 
 from aiocometd.transports.websocket import WebSocketTransport, WebSocketFactory
-from aiocometd.transports.constants import ConnectionType, MetaChannel
+from aiocometd.constants import ConnectionType, MetaChannel
 from aiocometd.exceptions import TransportConnectionClosed, TransportError
 
 

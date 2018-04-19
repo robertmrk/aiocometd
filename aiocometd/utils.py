@@ -2,6 +2,29 @@
 import re
 import asyncio
 from functools import wraps
+from http import HTTPStatus
+
+from .constants import META_CHANNEL_PREFIX, SERVICE_CHANNEL_PREFIX
+
+
+def defer(coro_func, delay=None, *, loop=None):
+    """Returns a coroutine function that will defer the call to the given
+    *coro_func* by *delay* seconds
+
+    :param asyncio.coroutine coro_func: A coroutine function
+    :param delay: Delay in seconds
+    :type delay: int, float or None
+    :param loop: An event loop
+    :type loop: asyncio.BaseEventLoop or None
+    :return: Coroutine function wrapper
+    """
+    @wraps(coro_func)
+    async def wrapper(*args, **kwargs):  # pylint: disable=missing-docstring
+        if delay:
+            await asyncio.sleep(delay, loop=loop)
+        return await coro_func(*args, **kwargs)
+
+    return wrapper
 
 
 def get_error_code(error_field):
@@ -71,21 +94,65 @@ def get_error_args(error_field):
     return result
 
 
-def defer(coro_func, delay=None, *, loop=None):
-    """Returns a coroutine function that will defer the call to the given
-    *coro_func* by *delay* seconds
+def is_matching_response(response_message, message):
+    """Check whether the *response_message* is a response for the
+    given *message*.
 
-    :param asyncio.coroutine coro_func: A coroutine function
-    :param delay: Delay in seconds
-    :type delay: int, float or None
-    :param loop: An event loop
-    :type loop: asyncio.BaseEventLoop or None
-    :return: Coroutine function wrapper
+    :param dict message: A sent message
+    :param response_message: A response message
+    :return: True if the *response_message* is a match for *message*
+             otherwise False.
+    :rtype: bool
     """
-    @wraps(coro_func)
-    async def wrapper(*args, **kwargs):  # pylint: disable=missing-docstring
-        if delay:
-            await asyncio.sleep(delay, loop=loop)
-        return await coro_func(*args, **kwargs)
+    if message is None or response_message is None:
+        return False
+    # to consider a response message as a pair of the sent message
+    # their channel should match, if they contain an id field it should
+    # also match (according to the specs an id is always optional),
+    # and the response message should contain the successful field
+    return (message["channel"] == response_message["channel"] and
+            message.get("id") == response_message.get("id") and
+            "successful" in response_message)
 
-    return wrapper
+
+def is_server_error_message(response_message):
+    """Check whether the *response_message* is a server side error message
+
+    :param response_message: A response message
+    :return: True if the *response_message* is a server side error message
+             otherwise False.
+    :rtype: bool
+    """
+    return not response_message.get("successful", True)
+
+
+def is_event_message(response_message):
+    """Check whether the *response_message* is an event message
+
+    :param response_message: A response message
+    :return: True if the *response_message* is an event message
+             otherwise False.
+    :rtype: bool
+    """
+    channel = response_message["channel"]
+    return (not channel.startswith(META_CHANNEL_PREFIX) and
+            not channel.startswith(SERVICE_CHANNEL_PREFIX) and
+            "data" in response_message)
+
+
+def is_auth_error_message(response_message):
+    """Check whether the *response_message* is an authentication error
+    message
+
+    :param response_message: A response message
+    :return: True if the *response_message* is an authentication error \
+    message, otherwise False.
+    :rtype: bool
+    """
+    error_code = get_error_code(response_message.get("error"))
+    # Strictly speaking, only UNAUTHORIZED should be considered as an auth
+    # error, but some channels can also react with FORBIDDEN for auth
+    # failures. This is certainly true for /meta/handshake, and since this
+    # might happen for other channels as well, it's better to stay safe
+    # and treat FORBIDDEN also as a potential auth error
+    return error_code in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN)
