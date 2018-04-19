@@ -9,7 +9,7 @@ from aiocometd.exceptions import TransportError
 
 class TestLongPollingTransport(TestCase):
     def setUp(self):
-        self.transport = LongPollingTransport(endpoint="example.com/cometd",
+        self.transport = LongPollingTransport(url="example.com/cometd",
                                               incoming_queue=None,
                                               loop=None)
 
@@ -43,7 +43,7 @@ class TestLongPollingTransport(TestCase):
         self.assertEqual(response, resp_data[0])
         self.transport._http_semaphore.__aenter__.assert_called()
         self.transport._http_semaphore.__aexit__.assert_called()
-        session.post.assert_called_with(self.transport._endpoint,
+        session.post.assert_called_with(self.transport._url,
                                         json=payload,
                                         ssl=self.transport.ssl,
                                         headers=headers)
@@ -83,7 +83,7 @@ class TestLongPollingTransport(TestCase):
         self.assertEqual(log.output, [log_message])
         self.transport._http_semaphore.__aenter__.assert_called()
         self.transport._http_semaphore.__aexit__.assert_called()
-        session.post.assert_called_with(self.transport._endpoint,
+        session.post.assert_called_with(self.transport._url,
                                         json=payload,
                                         ssl=self.transport.ssl,
                                         headers=headers)

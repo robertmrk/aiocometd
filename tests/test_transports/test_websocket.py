@@ -88,7 +88,7 @@ class TestWebSocketFactory(TestCase):
 
 class TestWebSocketTransport(TestCase):
     def setUp(self):
-        self.transport = WebSocketTransport(endpoint="example.com/cometd",
+        self.transport = WebSocketTransport(url="example.com/cometd",
                                             incoming_queue=None,
                                             loop=None)
 
@@ -109,7 +109,7 @@ class TestWebSocketTransport(TestCase):
 
         self.assertIs(result, expected_socket)
         self.transport._socket_factory_short.assert_called_with(
-            self.transport._endpoint,
+            self.transport._url,
             ssl=self.transport.ssl,
             headers=headers
         )
@@ -127,7 +127,7 @@ class TestWebSocketTransport(TestCase):
 
         self.assertIs(result, expected_socket)
         self.transport._socket_factory_long.assert_called_with(
-            self.transport._endpoint,
+            self.transport._url,
             ssl=self.transport.ssl,
             headers=headers
         )

@@ -22,7 +22,7 @@ class TransportBaseImpl(TransportBase):
 
 class TestTransportBase(TestCase):
     def setUp(self):
-        self.transport = TransportBaseImpl(endpoint="example.com/cometd",
+        self.transport = TransportBaseImpl(url="example.com/cometd",
                                            incoming_queue=None,
                                            loop=None)
 
@@ -37,7 +37,7 @@ class TestTransportBase(TestCase):
     def test_init_with_loop(self):
         loop = object()
 
-        transport = TransportBaseImpl(endpoint=None,
+        transport = TransportBaseImpl(url=None,
                                       incoming_queue=None,
                                       loop=loop)
 
@@ -49,7 +49,7 @@ class TestTransportBase(TestCase):
         loop = object()
         asyncio_mock.get_event_loop.return_value = loop
 
-        transport = TransportBaseImpl(endpoint=None,
+        transport = TransportBaseImpl(url=None,
                                       incoming_queue=None)
 
         self.assertIs(transport._loop, loop)
@@ -830,7 +830,7 @@ class TestTransportBase(TestCase):
 
     def test_endpoint(self):
         self.assertIs(self.transport.endpoint,
-                      self.transport._endpoint)
+                      self.transport._url)
 
     def test_endpoint_read_only(self):
         with self.assertRaises(AttributeError):

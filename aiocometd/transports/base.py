@@ -18,7 +18,7 @@ from ..exceptions import TransportInvalidOperation, TransportError
 LOGGER = logging.getLogger(__name__)
 
 
-class TransportBase(Transport):
+class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
     """Base transport implementation
 
     This class contains most of the transport operations implemented, it can
@@ -29,11 +29,11 @@ class TransportBase(Transport):
     #: Timeout to give to HTTP session to close itself
     _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
-    def __init__(self, *, endpoint, incoming_queue, client_id=None,
+    def __init__(self, *, url, incoming_queue, client_id=None,
                  reconnection_timeout=1, ssl=None, extensions=None, auth=None,
                  loop=None):
         """
-        :param str endpoint: CometD service url
+        :param str url: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
                                              messages
         :param str client_id: Clinet id value assigned by the server
@@ -58,7 +58,7 @@ class TransportBase(Transport):
         #: queue for consuming incoming event messages
         self.incoming_queue = incoming_queue
         #: CometD service url
-        self._endpoint = endpoint
+        self._url = url
         #: event loop used to schedule tasks
         self._loop = loop or asyncio.get_event_loop()
         #: clinet id value assigned by the server
@@ -120,7 +120,7 @@ class TransportBase(Transport):
     @property
     def endpoint(self):
         """CometD service url"""
-        return self._endpoint
+        return self._url
 
     @property
     def client_id(self):

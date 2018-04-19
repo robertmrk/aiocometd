@@ -26,7 +26,7 @@ class LongPollingTransport(TransportBase):
         try:
             session = await self._get_http_session()
             async with self._http_semaphore:
-                response = await session.post(self._endpoint, json=payload,
+                response = await session.post(self._url, json=payload,
                                               ssl=self.ssl, headers=headers)
             response_payload = await response.json()
             headers = response.headers

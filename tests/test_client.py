@@ -34,7 +34,7 @@ class TestClient(TestCase):
     def test_init_with_loop(self):
         loop = object()
 
-        client = Client(endpoint=None, loop=loop)
+        client = Client(url=None, loop=loop)
 
         self.assertIs(client._loop, loop)
 
@@ -43,12 +43,12 @@ class TestClient(TestCase):
         loop = object()
         asyncio_mock.get_event_loop.return_value = loop
 
-        client = Client(endpoint=None)
+        client = Client(url=None)
 
         self.assertIs(client._loop, loop)
 
     def test_init_with_no_connection_types(self):
-        client = Client(endpoint=None)
+        client = Client(url=None)
 
         self.assertEqual(client._connection_types,
                          [ConnectionType.WEBSOCKET,
@@ -57,14 +57,14 @@ class TestClient(TestCase):
     def test_init_with_connection_types_list(self):
         list = [ConnectionType.LONG_POLLING, ConnectionType.WEBSOCKET]
 
-        client = Client(endpoint=None, connection_types=list)
+        client = Client(url=None, connection_types=list)
 
         self.assertEqual(client._connection_types, list)
 
     def test_init_with_connection_type_value(self):
         type = ConnectionType.LONG_POLLING
 
-        client = Client(endpoint=None, connection_types=type)
+        client = Client(url=None, connection_types=type)
 
         self.assertEqual(client._connection_types, [type])
 
@@ -155,7 +155,7 @@ class TestClient(TestCase):
         self.assertEqual(result, transport)
         create_transport.assert_called_with(
             DEFAULT_CONNECTION_TYPE,
-            endpoint=self.client.endpoint,
+            url=self.client.url,
             incoming_queue=self.client._incoming_queue,
             ssl=self.client.ssl,
             extensions=self.client.extensions,
@@ -194,7 +194,7 @@ class TestClient(TestCase):
 
         create_transport.assert_called_with(
             DEFAULT_CONNECTION_TYPE,
-            endpoint=self.client.endpoint,
+            url=self.client.url,
             incoming_queue=self.client._incoming_queue,
             ssl=self.client.ssl,
             extensions=self.client.extensions,
@@ -241,7 +241,7 @@ class TestClient(TestCase):
             [
                 mock.call(
                     DEFAULT_CONNECTION_TYPE,
-                    endpoint=self.client.endpoint,
+                    url=self.client.url,
                     incoming_queue=self.client._incoming_queue,
                     ssl=self.client.ssl,
                     extensions=self.client.extensions,
@@ -249,7 +249,7 @@ class TestClient(TestCase):
                     loop=self.client._loop),
                 mock.call(
                     non_default_type,
-                    endpoint=self.client.endpoint,
+                    url=self.client.url,
                     incoming_queue=self.client._incoming_queue,
                     client_id=transport1.client_id,
                     ssl=self.client.ssl,
@@ -548,11 +548,11 @@ class TestClient(TestCase):
         self.client._check_server_disconnected.assert_called()
 
     def test_repr(self):
-        self.client.endpoint = "http://example.com"
+        self.client.url = "http://example.com"
         expected = "Client({}, {}, connection_timeout={}, ssl={}, " \
                    "max_pending_count={}, extensions={}, auth={}, " \
                    "loop={})".format(
-                        reprlib.repr(self.client.endpoint),
+                        reprlib.repr(self.client.url),
                         reprlib.repr(self.client._connection_types),
                         reprlib.repr(self.client.connection_timeout),
                         reprlib.repr(self.client.ssl),

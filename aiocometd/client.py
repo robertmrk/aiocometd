@@ -30,11 +30,11 @@ class Client:  # pylint: disable=too-many-instance-attributes
     _DEFAULT_CONNECTION_TYPES = [ConnectionType.WEBSOCKET,
                                  ConnectionType.LONG_POLLING]
 
-    def __init__(self, endpoint, connection_types=None, *,
+    def __init__(self, url, connection_types=None, *,
                  connection_timeout=10.0, ssl=None, max_pending_count=0,
                  extensions=None, auth=None, loop=None):
         """
-        :param str endpoint: CometD service url
+        :param str url: CometD service url
         :param connection_types: List of connection types in order of \
         preference, or a single connection type name. If ``None``, \
         [ConnectionType.WEBSOCKET, ConnectionType.LONG_POLLING] will be used.
@@ -64,7 +64,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
                      event loop.
         """
         #: CometD service url
-        self.endpoint = endpoint
+        self.url = url
         #: List of connection types to use in order of preference
         self._connection_types = None
         if isinstance(connection_types, ConnectionType):
@@ -98,7 +98,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         fmt_spec = "{}({}, {}, connection_timeout={}, ssl={}, " \
                    "max_pending_count={}, extensions={}, auth={}, loop={})"
         return fmt_spec.format(cls_name,
-                               reprlib.repr(self.endpoint),
+                               reprlib.repr(self.url),
                                reprlib.repr(self._connection_types),
                                reprlib.repr(self.connection_timeout),
                                reprlib.repr(self.ssl),
@@ -182,7 +182,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         """
         self._incoming_queue = asyncio.Queue(maxsize=self._max_pending_count)
         transport = create_transport(DEFAULT_CONNECTION_TYPE,
-                                     endpoint=self.endpoint,
+                                     url=self.url,
                                      incoming_queue=self._incoming_queue,
                                      ssl=self.ssl,
                                      extensions=self.extensions,
@@ -207,7 +207,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
                 await transport.close()
                 transport = create_transport(
                     connection_type,
-                    endpoint=self.endpoint,
+                    url=self.url,
                     incoming_queue=self._incoming_queue,
                     client_id=client_id,
                     ssl=self.ssl,
