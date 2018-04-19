@@ -163,9 +163,10 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         :param new_state: New state value
         :type new_state: TransportState
         """
-        if old_state is not None:
-            self._state_events[old_state].clear()
-        self._state_events[new_state].set()
+        if new_state != old_state:
+            if old_state is not None:
+                self._state_events[old_state].clear()
+            self._state_events[new_state].set()
 
     async def wait_for_state(self, state):
         """Waits for and returns when the transport enters the given *state*
@@ -481,12 +482,11 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         try:
             result = future.result()
             reconnect_timeout = self._reconnect_advice["interval"]
-            if self.state == TransportState.CONNECTING:
-                self._state = TransportState.CONNECTED
+            self._state = TransportState.CONNECTED
         except Exception as error:  # pylint: disable=broad-except
             result = error
             reconnect_timeout = self._reconnect_timeout
-            if self.state == TransportState.CONNECTED:
+            if self.state != TransportState.DISCONNECTING:
                 self._state = TransportState.CONNECTING
 
         LOGGER.debug("Connect task finished with: %r", result)

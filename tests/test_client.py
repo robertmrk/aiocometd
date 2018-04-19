@@ -386,6 +386,20 @@ class TestClient(TestCase):
         self.client._transport.close.assert_not_called()
         self.assertTrue(self.client.closed)
 
+    async def test_close_no_transport(self):
+        self.client._closed = False
+        self.client._transport = None
+        expected_log = [
+            "INFO:aiocometd.client:Closing client...",
+            "INFO:aiocometd.client:Client closed."
+        ]
+
+        with self.assertLogs("aiocometd.client", "DEBUG") as log:
+            await self.client.close()
+
+        self.assertTrue(self.client.closed)
+        self.assertEqual(log.output, expected_log)
+
     async def test_subscribe(self):
         response = {
             "channel": MetaChannel.SUBSCRIBE,

@@ -41,6 +41,11 @@ class TestWebSocketFactory(TestCase):
         self.assertIsNone(self.factory._context)
         self.assertIsNone(self.factory._socket)
 
+    async def test_exit_none_context(self):
+        self.factory._context = None
+
+        await self.factory._exit()
+
     async def test_close(self):
         self.factory._exit = mock.CoroutineMock()
 

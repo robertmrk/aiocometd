@@ -84,6 +84,18 @@ class TestTransportBase(TestCase):
         asyncio_mock.sleep.assert_called_with(
             self.transport._HTTP_SESSION_CLOSE_TIMEOUT)
 
+    @mock.patch("aiocometd.transports.base.asyncio")
+    async def test_close_http_session_already_closed(self, asyncio_mock):
+        self.transport._http_session = mock.MagicMock()
+        self.transport._http_session.closed = True
+        self.transport._http_session.close = mock.CoroutineMock()
+        asyncio_mock.sleep = mock.CoroutineMock()
+
+        await self.transport._close_http_session()
+
+        self.transport._http_session.close.assert_not_called()
+        asyncio_mock.sleep.assert_not_called()
+
     def test_finalize_message_updates_fields(self):
         message = {
             "field": "value",
@@ -466,6 +478,60 @@ class TestTransportBase(TestCase):
         self.assertEqual(self.transport.client_id, response["clientId"])
         self.assertTrue(self.transport._subscribe_on_connect)
 
+    async def test_handshake_empty_connection_types(self):
+        connection_types = []
+        response = {
+            "clientId": "id1",
+            "successful": True
+        }
+        self.transport._send_message = \
+            mock.CoroutineMock(return_value=response)
+        message = {
+            "channel": MetaChannel.HANDSHAKE,
+            "version": "1.0",
+            "supportedConnectionTypes": None,
+            "minimumVersion": "1.0",
+            "id": None
+        }
+        self.transport._subscribe_on_connect = False
+
+        result = await self.transport.handshake(connection_types)
+
+        self.assertEqual(result, response)
+        final_connection_types = [self.transport.connection_type.value]
+        self.transport._send_message.assert_called_with(
+            message,
+            supportedConnectionTypes=final_connection_types)
+        self.assertEqual(self.transport.client_id, response["clientId"])
+        self.assertTrue(self.transport._subscribe_on_connect)
+
+    async def test_handshake_with_own_connection_type(self):
+        connection_types = [self.transport.connection_type]
+        response = {
+            "clientId": "id1",
+            "successful": True
+        }
+        self.transport._send_message = \
+            mock.CoroutineMock(return_value=response)
+        message = {
+            "channel": MetaChannel.HANDSHAKE,
+            "version": "1.0",
+            "supportedConnectionTypes": None,
+            "minimumVersion": "1.0",
+            "id": None
+        }
+        self.transport._subscribe_on_connect = False
+
+        result = await self.transport.handshake(connection_types)
+
+        self.assertEqual(result, response)
+        final_connection_types = [self.transport.connection_type.value]
+        self.transport._send_message.assert_called_with(
+            message,
+            supportedConnectionTypes=final_connection_types)
+        self.assertEqual(self.transport.client_id, response["clientId"])
+        self.assertTrue(self.transport._subscribe_on_connect)
+
     async def test_handshake_failure(self):
         connection_types = [ConnectionType.WEBSOCKET]
         response = {
@@ -686,8 +752,8 @@ class TestTransportBase(TestCase):
         self.assertEqual(self.transport.state, TransportState.CONNECTING)
 
     async def test_connect_done_with_result(self):
-        task = asyncio.ensure_future(self.long_task("result"))
-        await asyncio.wait([task])
+        task = self.loop.create_future()
+        task.set_result("result")
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTING
         self.transport._reconnect_advice = {
@@ -708,8 +774,8 @@ class TestTransportBase(TestCase):
 
     async def test_connect_done_with_error(self):
         error = RuntimeError("error")
-        task = asyncio.ensure_future(self.long_task(error))
-        await asyncio.wait([task])
+        task = self.loop.create_future()
+        task.set_exception(error)
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTED
         self.transport._reconnect_advice = {
@@ -729,8 +795,9 @@ class TestTransportBase(TestCase):
         self.assertEqual(self.transport.state, TransportState.CONNECTING)
 
     async def test_connect_dont_follow_advice_on_disconnecting(self):
-        task = asyncio.ensure_future(self.long_task("result"))
-        await asyncio.wait([task])
+        error = RuntimeError("error")
+        task = self.loop.create_future()
+        task.set_exception(error)
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.DISCONNECTING
         self.transport._reconnect_advice = {
@@ -742,7 +809,7 @@ class TestTransportBase(TestCase):
         with self.assertLogs(TransportBase.__module__, "DEBUG") as log:
             self.transport._connect_done(task)
 
-        log_message = "Connect task finished with: {!r}".format("result")
+        log_message = "Connect task finished with: {!r}".format(error)
         self.assertEqual(
             log.output,
             ["DEBUG:{}:{}".format(TransportBase.__module__, log_message)])
@@ -1018,6 +1085,17 @@ class TestTransportBase(TestCase):
         extension.outgoing.assert_called_with(payload, headers)
         auth.outgoing.assert_called_with(payload, headers)
 
+    async def test_process_outgoing_payload_without_auth(self):
+        extension = mock.create_autospec(spec=Extension)
+        self.transport._extensions = [extension]
+        self.transport._auth = None
+        payload = object()
+        headers = object()
+
+        await self.transport._process_outgoing_payload(payload, headers)
+
+        extension.outgoing.assert_called_with(payload, headers)
+
     async def test_send_payload_with_auth(self):
         response = object()
         payload = object()
@@ -1105,6 +1183,16 @@ class TestTransportBase(TestCase):
         self.transport._set_state_event(old_state, new_state)
 
         self.assertTrue(self.transport._state_events[new_state].is_set())
+
+    def test_set_state_event_unchanged_state(self):
+        state = TransportState.CONNECTED
+        event_mock = mock.MagicMock()
+        self.transport._state_events[state] = event_mock
+
+        self.transport._set_state_event(state, state)
+
+        event_mock.set.assert_not_called()
+        event_mock.clear.assert_not_called()
 
     def test_last_connect_result(self):
         self.transport._connect_task = mock.MagicMock()
