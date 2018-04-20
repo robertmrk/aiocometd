@@ -120,4 +120,4 @@ method can be used.
     data = {"foo": "bar"}
     response = await client.publish("/foo/bar", data)
 
-.. _CometD: https://cometd.org/
+.. include:: global.rst
