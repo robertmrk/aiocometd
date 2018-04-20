@@ -1,4 +1,16 @@
-"""Exception types"""
+"""Exception types
+
+Exception hierarchy::
+
+    AiocometdException
+        ClientError
+            ClientInvalidOperation
+        TransportError
+            TransportInvalidOperation
+            TransportTimeoutError
+            TransportConnectionClosed
+        ServerError
+"""
 from . import utils
 
 

@@ -37,7 +37,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
         :param str url: CometD service url
         :param connection_types: List of connection types in order of \
         preference, or a single connection type name. If ``None``, \
-        [ConnectionType.WEBSOCKET, ConnectionType.LONG_POLLING] will be used.
+        [:obj:`~ConnectionType.WEBSOCKET`, \
+        :obj:`~ConnectionType.LONG_POLLING`] will be used as a default value.
         :type connection_types: list[ConnectionType], ConnectionType or None
         :param connection_timeout: The maximum amount of time to wait for the \
         transport to re-establish a connection with the server when the \
@@ -121,12 +122,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
 
     @property
     def connection_type(self):
-        """The current connection
-
-        :return: The current connection type in use if the client is open, \
-        otherwise ``None``
-        :rtype: ConnectionType or None
-        """
+        """The current connection type in use if the client is open,
+        otherwise ``None``"""
         if self._transport is not None:
             return self._transport.connection_type
         return None
