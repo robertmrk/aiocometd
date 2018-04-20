@@ -48,4 +48,3 @@ Exceptions
 .. automodule:: aiocometd.exceptions
     :members:
     :undoc-members:
-    :show-inheritance:
