@@ -524,8 +524,9 @@ class TestClient(TestCase):
         self.client._check_server_disconnected = mock.CoroutineMock()
         self.client._closed = False
 
-        await self.client.publish("channel1", data)
+        result = await self.client.publish("channel1", data)
 
+        self.assertEqual(result, response)
         self.client._transport.publish.assert_called_with("channel1", data)
         self.client._check_server_disconnected.assert_called()
 

@@ -304,6 +304,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
 
         :param str channel: Name of the channel
         :param dict data: Data to send to the server
+        :return: Publish response
+        :rtype: dict
         :raise ClientInvalidOperation: If the client is :obj:`closed`
         :raise TransportError: If a network or transport related error occurs
         :raise ServerError: If the publish request gets rejected by the server
@@ -315,6 +317,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
 
         response = await self._transport.publish(channel, data)
         self._verify_response(response)
+        return response
 
     def _verify_response(self, response):
         """Check the ``successful`` status of the *response* and raise \
