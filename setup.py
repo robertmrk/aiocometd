@@ -11,7 +11,8 @@ TESTS_REQUIRE = [
     "coverage>=4.5,<5.0"
 ]
 DOCS_REQUIRE = [
-    "Sphinx>=1.7,<2.0"
+    "Sphinx>=1.7,<2.0",
+    "sphinxcontrib-asyncio>=0.2.0"
 ]
 EXAMPLES_REQUIRE = [
     "aioconsole>=0.1.7,<1.0.0"
