@@ -81,7 +81,7 @@ subscribed to then you must unsubscribe from the channel.
 
 .. code-block:: python
 
-    await client.usubscribe("/chat/demo")
+    await client.unsubscribe("/chat/demo")
 
 The current set of subscriptions can be obtained from the
 :obj:`Client.subscriptions` attribute.

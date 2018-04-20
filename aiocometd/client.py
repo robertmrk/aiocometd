@@ -122,12 +122,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
 
     @property
     def connection_type(self):
-        """The current connection
-
-        :return: The current connection type in use if the client is open, \
-        otherwise ``None``
-        :rtype: ConnectionType or None
-        """
+        """The current connection type in use if the client is open,
+        otherwise ``None``"""
         if self._transport is not None:
             return self._transport.connection_type
         return None

@@ -6,3 +6,4 @@ User's guide
 
     install
     quickstart
+    advanced
