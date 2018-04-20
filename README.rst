@@ -58,16 +58,15 @@ Usage
         loop = asyncio.get_event_loop()
         loop.run_until_complete(chat())
 
-For a more complete example take a look at `chat.py <examples/chat.py>`_.
 
 Install
 -------
 
-.. code-block::
+.. code-block:: bash
 
-   pip install aiocometd
+    pip install aiocometd
 
-Dependencies
+Requirements
 ------------
 
 - Python 3.6+
