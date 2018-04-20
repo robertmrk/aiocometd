@@ -31,7 +31,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
                                  ConnectionType.LONG_POLLING]
 
     def __init__(self, url, connection_types=None, *,
-                 connection_timeout=10.0, ssl=None, max_pending_count=0,
+                 connection_timeout=10.0, ssl=None, max_pending_count=100,
                  extensions=None, auth=None, loop=None):
         """
         :param str url: CometD service url
