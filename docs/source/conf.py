@@ -16,17 +16,28 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath('../..'))
 
+here = os.path.abspath(os.path.dirname(__file__))
+
+
+def read(file_path):
+    with open(os.path.join(here, file_path)) as file:
+        return file.read().strip()
+
+
+metadata = {}
+metadata_path = os.path.join(here, "../../aiocometd/_metadata.py")
+exec(read(metadata_path), metadata)
 
 # -- Project information -----------------------------------------------------
 
-project = 'aiocometd'
-copyright = '2018, Robert Marki'
-author = 'Robert Marki'
+project = metadata["TITLE"]
+copyright = '2018, ' + metadata["AUTHOR"]
+author =  metadata["AUTHOR"]
 
 # The short X.Y version
-version = ''
+version = metadata["VERSION"]
 # The full version, including alpha/beta/rc tags
-release = '0.1.0'
+release = metadata["VERSION"]
 
 
 # -- General configuration ---------------------------------------------------
