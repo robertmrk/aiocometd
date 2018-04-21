@@ -1,6 +1,22 @@
 aiocometd
 =========
 
+.. image:: https://readthedocs.org/projects/aiocometd/badge/?version=latest
+    :target: http://aiocometd.readthedocs.io/en/latest/?badge=latest
+    :alt: Documentation Status
+
+.. image:: https://travis-ci.org/robertmrk/aiocometd.svg?branch=develop
+    :target: https://travis-ci.org/robertmrk/aiocometd
+    :alt: Build status
+
+.. image:: https://coveralls.io/repos/github/robertmrk/aiocometd/badge.svg
+    :target: https://coveralls.io/github/robertmrk/aiocometd
+    :alt: Coverage
+
+.. image:: https://img.shields.io/badge/License-MIT-yellow.svg
+    :target: https://opensource.org/licenses/MIT
+    :alt: MIT license
+
 aiocometd is a CometD_ client built using asyncio_.
 
 CometD_ is a scalable WebSocket and HTTP based event and message routing bus.

@@ -2,7 +2,7 @@
 TITLE = "aiocometd"
 DESCRIPTION = "CometD client for asyncio"
 KEYWORDS = "asyncio aiohttp comet cometd bayeux push streaming"
-URL = ""
+URL = "https://github.com/robertmrk/aiocometd"
 VERSION = "0.1.0"
 AUTHOR = "Róbert Márki"
 AUTHOR_EMAIL = "gsmiko@gmail.com"
