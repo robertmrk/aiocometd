@@ -1,0 +1,9 @@
+include LICENSE.txt
+include CHANGES.rst
+include README.rst
+include .pylintrc
+graft tests
+graft docs
+graft examples
+global-exclude *.pyc
+prune docs/build
