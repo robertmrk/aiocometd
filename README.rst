@@ -1,6 +1,10 @@
 aiocometd
 =========
 
+.. image:: https://badge.fury.io/py/aiocometd.svg
+    :target: https://badge.fury.io/py/aiocometd
+    :alt: PyPI package
+
 .. image:: https://readthedocs.org/projects/aiocometd/badge/?version=latest
     :target: http://aiocometd.readthedocs.io/en/latest/?badge=latest
     :alt: Documentation Status
