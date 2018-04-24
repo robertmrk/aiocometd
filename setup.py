@@ -38,7 +38,7 @@ setup(
     version=metadata["VERSION"],
     description=metadata["DESCRIPTION"],
     long_description='\n\n'.join((read('DESCRIPTION.rst'),
-                                  read('CHANGES.rst'))),
+                                  read('docs/source/changes.rst'))),
     classifiers=[
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",

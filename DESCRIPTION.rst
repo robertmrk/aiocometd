@@ -21,7 +21,8 @@ aiocometd
     :target: https://opensource.org/licenses/MIT
     :alt: MIT license
 
-aiocometd is a CometD_ client built using asyncio_.
+aiocometd is a CometD_ client built using asyncio_, implementing the Bayeux_
+protocol.
 
 CometD_ is a scalable WebSocket and HTTP based event and message routing bus.
 CometD_ makes use of WebSocket and HTTP push technologies known as Comet_ to
@@ -79,7 +80,4 @@ Usage
         loop.run_until_complete(chat())
 
 
-.. _aiohttp: https://github.com/aio-libs/aiohttp/
-.. _CometD: https://cometd.org/
-.. _Comet: https://en.wikipedia.org/wiki/Comet_(programming)
-.. _asyncio: https://docs.python.org/3/library/asyncio.html
+.. include:: docs/source/global.rst
