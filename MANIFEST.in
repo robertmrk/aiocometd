@@ -1,5 +1,5 @@
 include LICENSE.txt
-include CHANGES.rst
+include DESCRIPTION.rst
 include README.rst
 include .pylintrc
 graft tests
