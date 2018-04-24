@@ -34,7 +34,7 @@ Channels
 A channel is a string that looks like a URL path such as ``/foo/bar``,
 ``/meta/connect`` or ``/service/chat``.
 
-The Bayeux specification defines three types of channels: *meta channels*,
+The Bayeux_ specification defines three types of channels: *meta channels*,
 *service channels* and *broadcast channels*.
 
 A channel that starts with ``/meta/`` is a meta channel, a channel that
@@ -44,7 +44,7 @@ broadcast channels.
 Meta channels
 ~~~~~~~~~~~~~
 
-*Meta channels* provide to applications information about the Bayeux protocol,
+*Meta channels* provide to applications information about the Bayeux_ protocol,
 they are handled by the client internally, the users of the client shouldn't
 send or receive messages from these channels.
 
@@ -98,7 +98,10 @@ To receive messages broadcasted by the server after
     message = await client.receive()
 
 The :py:meth:`~Client.receive` method will wait until a message is received
-or it will raise an error in case the connection is lost with the server.
+or it will raise a :py:obj:`~exceptions.TransportTimeoutError` in case the
+connection is lost with the server and the client can't re-establish the
+connection or a :py:obj:`~exceptions.ServerError` if the connection gets
+closed by the server.
 
 The client can also be used as an asynchronous iterator in a for loop to wait
 for incoming messages.
