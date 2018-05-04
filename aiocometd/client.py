@@ -4,6 +4,7 @@ import reprlib
 import logging
 from collections import abc
 from contextlib import suppress
+import json
 
 from .transports import create_transport
 from .constants import DEFAULT_CONNECTION_TYPE, ConnectionType, MetaChannel, \
@@ -32,7 +33,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
 
     def __init__(self, url, connection_types=None, *,
                  connection_timeout=10.0, ssl=None, max_pending_count=100,
-                 extensions=None, auth=None, loop=None):
+                 extensions=None, auth=None, json_dumps=json.dumps,
+                 json_loads=json.loads, loop=None):
         """
         :param str url: CometD service url
         :param connection_types: List of connection types in order of \
@@ -59,6 +61,12 @@ class Client:  # pylint: disable=too-many-instance-attributes
         :param extensions: List of protocol extension objects
         :type extensions: list[Extension] or None
         :param AuthExtension auth: An auth extension
+        :param json_dumps: Function for JSON serialization, the default is \
+        :func:`json.dumps`
+        :type json_dumps: :func:`callable`
+        :param json_loads: Function for JSON deserialization, the default is \
+        :func:`json.loads`
+        :type json_loads: :func:`callable`
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -92,6 +100,10 @@ class Client:  # pylint: disable=too-many-instance-attributes
         self.extensions = extensions
         #: An auth extension
         self.auth = auth
+        #: Function for JSON serialization
+        self._json_dumps = json_dumps
+        #: Function for JSON deserialization
+        self._json_loads = json_loads
 
     def __repr__(self):
         """Formal string representation"""
@@ -184,6 +196,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
                                      ssl=self.ssl,
                                      extensions=self.extensions,
                                      auth=self.auth,
+                                     json_dumps=self._json_dumps,
+                                     json_loads=self._json_loads,
                                      loop=self._loop)
 
         try:
@@ -210,6 +224,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
                     ssl=self.ssl,
                     extensions=self.extensions,
                     auth=self.auth,
+                    json_dumps=self._json_dumps,
+                    json_loads=self._json_loads,
                     loop=self._loop)
             return transport
         except Exception:

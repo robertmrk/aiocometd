@@ -1,7 +1,6 @@
 import asyncio
 
 from asynctest import TestCase, mock
-from aiohttp import ClientSession
 
 from aiocometd.transports.base import TransportBase
 from aiocometd.constants import ConnectionType, MetaChannel, \
@@ -56,20 +55,25 @@ class TestTransportBase(TestCase):
         self.assertEqual(transport.state, TransportState.DISCONNECTED)
 
     async def test_get_http_session(self):
-        self.transport._http_session = ClientSession()
+        self.transport._http_session = object()
 
         session = await self.transport._get_http_session()
 
-        self.assertIsInstance(session, ClientSession)
-        await session.close()
+        self.assertEqual(session, self.transport._http_session)
 
-    async def test_get_http_session_creates_session(self):
+    @mock.patch("aiocometd.transports.base.aiohttp.ClientSession")
+    async def test_get_http_session_creates_session(self, client_session_cls):
         self.transport._http_session = None
+        session = object()
+        client_session_cls.return_value = session
 
         session = await self.transport._get_http_session()
 
-        self.assertIsInstance(session, ClientSession)
-        await session.close()
+        self.assertEqual(session, self.transport._http_session)
+        self.assertEqual(self.transport._http_session, session)
+        client_session_cls.assert_called_with(
+            json_serialize=self.transport._json_dumps
+        )
 
     @mock.patch("aiocometd.transports.base.asyncio")
     async def test_close_http_session(self, asyncio_mock):

@@ -185,7 +185,9 @@ class TestWebSocketTransport(TestCase):
 
         await self.transport._send_socket_payload(socket, payload)
 
-        socket.send_json.assert_called_with(payload)
+        socket.send_json.assert_called_with(payload,
+                                            dumps=self.transport._json_dumps)
+        response.json.assert_called_with(loads=self.transport._json_loads)
         self.transport._consume_payload.assert_called_with(
             response_payload,
             headers=None,
@@ -207,7 +209,9 @@ class TestWebSocketTransport(TestCase):
 
         await self.transport._send_socket_payload(socket, payload)
 
-        socket.send_json.assert_called_with(payload)
+        socket.send_json.assert_called_with(payload,
+                                            dumps=self.transport._json_dumps)
+        response.json.assert_called_with(loads=self.transport._json_loads)
         self.transport._consume_payload.assert_called_with(
             response_payload,
             headers=None,
@@ -231,7 +235,8 @@ class TestWebSocketTransport(TestCase):
                                     "factory."):
             await self.transport._send_socket_payload(socket, payload)
 
-        socket.send_json.assert_called_with(payload)
+        socket.send_json.assert_called_with(payload,
+                                            dumps=self.transport._json_dumps)
         self.transport._consume_payload.assert_not_called()
 
     async def test_send_final_payload(self):

@@ -160,6 +160,8 @@ class TestClient(TestCase):
             ssl=self.client.ssl,
             extensions=self.client.extensions,
             auth=self.client.auth,
+            json_dumps=self.client._json_dumps,
+            json_loads=self.client._json_loads,
             loop=self.client._loop)
         transport.handshake.assert_called_with(self.client._connection_types)
         self.client._verify_response.assert_called_with(response)
@@ -199,6 +201,8 @@ class TestClient(TestCase):
             ssl=self.client.ssl,
             extensions=self.client.extensions,
             auth=self.client.auth,
+            json_dumps=self.client._json_dumps,
+            json_loads=self.client._json_loads,
             loop=self.client._loop)
         transport.handshake.assert_called_with(self.client._connection_types)
         self.client._pick_connection_type.assert_called_with(
@@ -246,6 +250,8 @@ class TestClient(TestCase):
                     ssl=self.client.ssl,
                     extensions=self.client.extensions,
                     auth=self.client.auth,
+                    json_dumps=self.client._json_dumps,
+                    json_loads=self.client._json_loads,
                     loop=self.client._loop),
                 mock.call(
                     non_default_type,
@@ -255,6 +261,8 @@ class TestClient(TestCase):
                     ssl=self.client.ssl,
                     extensions=self.client.extensions,
                     auth=self.client.auth,
+                    json_dumps=self.client._json_dumps,
+                    json_loads=self.client._json_loads,
                     loop=self.client._loop)
             ]
         )

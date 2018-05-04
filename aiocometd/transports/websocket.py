@@ -166,13 +166,13 @@ class WebSocketTransport(TransportBase):
         """
         # receive responses from the server and consume them,
         # until we get back the response for the first message in the *payload*
-        await socket.send_json(payload)
+        await socket.send_json(payload, dumps=self._json_dumps)
         while True:
             response = await socket.receive()
             if response.type == aiohttp.WSMsgType.CLOSE:
                 raise TransportConnectionClosed("Received CLOSE message on "
                                                 "the factory.")
-            response_payload = response.json()
+            response_payload = response.json(loads=self._json_loads)
             matching_response = await self._consume_payload(
                 response_payload,
                 headers=None,

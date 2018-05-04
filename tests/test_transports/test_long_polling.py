@@ -47,6 +47,7 @@ class TestLongPollingTransport(TestCase):
                                         json=payload,
                                         ssl=self.transport.ssl,
                                         headers=headers)
+        response_mock.json.assert_called_with(loads=self.transport._json_loads)
         self.transport._consume_payload.assert_called_with(
             resp_data,
             headers=response_mock.headers,

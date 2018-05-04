@@ -3,6 +3,7 @@ import asyncio
 import logging
 from abc import abstractmethod
 from contextlib import suppress
+import json
 
 import aiohttp
 
@@ -31,7 +32,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
 
     def __init__(self, *, url, incoming_queue, client_id=None,
                  reconnection_timeout=1, ssl=None, extensions=None, auth=None,
-                 loop=None):
+                 json_dumps=json.dumps, json_loads=json.loads, loop=None):
         """
         :param str url: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
@@ -50,6 +51,12 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         :param extensions: List of protocol extension objects
         :type extensions: list[Extension] or None
         :param AuthExtension auth: An auth extension
+        :param json_dumps: Function for JSON serialization, the default is \
+        :func:`json.dumps`
+        :type json_dumps: :func:`callable`
+        :param json_loads: Function for JSON deserialization, the default is \
+        :func:`json.loads`
+        :type json_loads: :func:`callable`
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -88,6 +95,10 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         self._extensions = extensions or []
         #: An auth extension
         self._auth = auth
+        #: Function for JSON serialization
+        self._json_dumps = json_dumps
+        #: Function for JSON deserialization
+        self._json_loads = json_loads
 
     async def _get_http_session(self):
         """Factory method for getting the current HTTP session
@@ -100,7 +111,9 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         # aiohttp produces log messages with warnings that a session should be
         # created in a coroutine
         if self._http_session is None:
-            self._http_session = aiohttp.ClientSession()
+            self._http_session = aiohttp.ClientSession(
+                json_serialize=self._json_dumps
+            )
         return self._http_session
 
     async def _close_http_session(self):
