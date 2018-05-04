@@ -27,8 +27,9 @@ class LongPollingTransport(TransportBase):
             session = await self._get_http_session()
             async with self._http_semaphore:
                 response = await session.post(self._url, json=payload,
-                                              ssl=self.ssl, headers=headers)
-            response_payload = await response.json()
+                                              ssl=self.ssl, headers=headers,
+                                              timeout=self.request_timeout)
+            response_payload = await response.json(loads=self._json_loads)
             headers = response.headers
         except aiohttp.client_exceptions.ClientError as error:
             LOGGER.warning("Failed to send payload, %s", error)

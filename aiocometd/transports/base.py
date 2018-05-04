@@ -3,6 +3,7 @@ import asyncio
 import logging
 from abc import abstractmethod
 from contextlib import suppress
+import json
 
 import aiohttp
 
@@ -31,7 +32,8 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
 
     def __init__(self, *, url, incoming_queue, client_id=None,
                  reconnection_timeout=1, ssl=None, extensions=None, auth=None,
-                 loop=None):
+                 json_dumps=json.dumps, json_loads=json.loads,
+                 reconnect_advice=None, loop=None):
         """
         :param str url: CometD service url
         :param asyncio.Queue incoming_queue: Queue for consuming incoming event
@@ -50,6 +52,14 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         :param extensions: List of protocol extension objects
         :type extensions: list[Extension] or None
         :param AuthExtension auth: An auth extension
+        :param json_dumps: Function for JSON serialization, the default is \
+        :func:`json.dumps`
+        :type json_dumps: :func:`callable`
+        :param json_loads: Function for JSON deserialization, the default is \
+        :func:`json.loads`
+        :type json_loads: :func:`callable`
+        :param reconnect_advice: Initial reconnect advice
+        :type reconnect_advice: dict or None
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -67,7 +77,9 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         #: session
         self._message_id = 0
         #: reconnection advice parameters returned by the server
-        self._reconnect_advice = {}
+        self.reconnect_advice = reconnect_advice
+        if self.reconnect_advice is None:
+            self.reconnect_advice = {}
         #: set of subscribed channels
         self._subscriptions = set()
         #: boolean to mark whether to resubscribe on connect
@@ -88,6 +100,10 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         self._extensions = extensions or []
         #: An auth extension
         self._auth = auth
+        #: Function for JSON serialization
+        self._json_dumps = json_dumps
+        #: Function for JSON deserialization
+        self._json_loads = json_loads
 
     async def _get_http_session(self):
         """Factory method for getting the current HTTP session
@@ -100,7 +116,9 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         # aiohttp produces log messages with warnings that a session should be
         # created in a coroutine
         if self._http_session is None:
-            self._http_session = aiohttp.ClientSession()
+            self._http_session = aiohttp.ClientSession(
+                json_serialize=self._json_dumps
+            )
         return self._http_session
 
     async def _close_http_session(self):
@@ -153,6 +171,14 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
     def _state(self, value):
         self._set_state_event(self._state, value)
         self.__dict__["_state"] = value
+
+    @property
+    def request_timeout(self):
+        """Number of seconds after a network request should time out"""
+        timeout = self.reconnect_advice.get("timeout")
+        if timeout:
+            timeout /= 1000
+        return timeout
 
     def _set_state_event(self, old_state, new_state):
         """Set event associated with the *new_state* and clear the event for
@@ -392,7 +418,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
             # if there is an advice in the message then update the transport's
             # reconnect advice
             if "advice" in message:
-                self._reconnect_advice = message["advice"]
+                self.reconnect_advice = message["advice"]
 
             # update subscriptions based on responses
             self._update_subscriptions(message)
@@ -481,7 +507,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         """
         try:
             result = future.result()
-            reconnect_timeout = self._reconnect_advice["interval"]
+            reconnect_timeout = self.reconnect_advice["interval"]
             self._state = TransportState.CONNECTED
         except Exception as error:  # pylint: disable=broad-except
             result = error
@@ -504,7 +530,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         :param reconnect_timeout: Initial connection delay to pass to \
         :obj:`_connect` or :obj:`handshake`.
         """
-        advice = self._reconnect_advice.get("reconnect")
+        advice = self.reconnect_advice.get("reconnect")
 
         # do a handshake operation if advised
         if advice == "handshake":

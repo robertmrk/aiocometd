@@ -160,6 +160,8 @@ class TestClient(TestCase):
             ssl=self.client.ssl,
             extensions=self.client.extensions,
             auth=self.client.auth,
+            json_dumps=self.client._json_dumps,
+            json_loads=self.client._json_loads,
             loop=self.client._loop)
         transport.handshake.assert_called_with(self.client._connection_types)
         self.client._verify_response.assert_called_with(response)
@@ -199,6 +201,8 @@ class TestClient(TestCase):
             ssl=self.client.ssl,
             extensions=self.client.extensions,
             auth=self.client.auth,
+            json_dumps=self.client._json_dumps,
+            json_loads=self.client._json_loads,
             loop=self.client._loop)
         transport.handshake.assert_called_with(self.client._connection_types)
         self.client._pick_connection_type.assert_called_with(
@@ -222,6 +226,7 @@ class TestClient(TestCase):
         transport1.connection_type = DEFAULT_CONNECTION_TYPE
         transport1.client_id = "client_id"
         transport1.handshake = mock.CoroutineMock(return_value=response)
+        transport1.reconnect_advice = object()
         transport1.close = mock.CoroutineMock()
         transport2 = mock.MagicMock()
         transport2.connection_type = non_default_type
@@ -246,6 +251,8 @@ class TestClient(TestCase):
                     ssl=self.client.ssl,
                     extensions=self.client.extensions,
                     auth=self.client.auth,
+                    json_dumps=self.client._json_dumps,
+                    json_loads=self.client._json_loads,
                     loop=self.client._loop),
                 mock.call(
                     non_default_type,
@@ -255,6 +262,9 @@ class TestClient(TestCase):
                     ssl=self.client.ssl,
                     extensions=self.client.extensions,
                     auth=self.client.auth,
+                    json_dumps=self.client._json_dumps,
+                    json_loads=self.client._json_loads,
+                    reconnect_advice=transport1.reconnect_advice,
                     loop=self.client._loop)
             ]
         )

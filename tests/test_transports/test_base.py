@@ -1,7 +1,6 @@
 import asyncio
 
 from asynctest import TestCase, mock
-from aiohttp import ClientSession
 
 from aiocometd.transports.base import TransportBase
 from aiocometd.constants import ConnectionType, MetaChannel, \
@@ -55,21 +54,41 @@ class TestTransportBase(TestCase):
         self.assertIs(transport._loop, loop)
         self.assertEqual(transport.state, TransportState.DISCONNECTED)
 
+    def test_init_with_reconnect_advice(self):
+        advice = object()
+
+        transport = TransportBaseImpl(url=None,
+                                      incoming_queue=None,
+                                      reconnect_advice=advice)
+
+        self.assertIs(transport.reconnect_advice, advice)
+
+    def test_init_without_reconnect_advice(self):
+        transport = TransportBaseImpl(url=None,
+                                      incoming_queue=None)
+
+        self.assertEqual(transport.reconnect_advice, {})
+
     async def test_get_http_session(self):
-        self.transport._http_session = ClientSession()
+        self.transport._http_session = object()
 
         session = await self.transport._get_http_session()
 
-        self.assertIsInstance(session, ClientSession)
-        await session.close()
+        self.assertEqual(session, self.transport._http_session)
 
-    async def test_get_http_session_creates_session(self):
+    @mock.patch("aiocometd.transports.base.aiohttp.ClientSession")
+    async def test_get_http_session_creates_session(self, client_session_cls):
         self.transport._http_session = None
+        session = object()
+        client_session_cls.return_value = session
 
         session = await self.transport._get_http_session()
 
-        self.assertIsInstance(session, ClientSession)
-        await session.close()
+        self.assertEqual(session, self.transport._http_session)
+        self.assertEqual(self.transport._http_session, session)
+        client_session_cls.assert_called_with(
+            json_serialize=self.transport._json_dumps
+        )
 
     @mock.patch("aiocometd.transports.base.asyncio")
     async def test_close_http_session(self, asyncio_mock):
@@ -331,7 +350,7 @@ class TestTransportBase(TestCase):
             payload, find_response_for=message)
 
         self.assertEqual(result, payload[0])
-        self.assertEqual(self.transport._reconnect_advice, {})
+        self.assertEqual(self.transport.reconnect_advice, {})
         self.transport._update_subscriptions.assert_called_with(payload[0])
         is_matching_response.assert_called_with(payload[0], message)
         self.transport._consume_message.assert_not_called()
@@ -370,7 +389,7 @@ class TestTransportBase(TestCase):
             payload, headers=headers, find_response_for=message)
 
         self.assertEqual(result, payload[0])
-        self.assertEqual(self.transport._reconnect_advice, {})
+        self.assertEqual(self.transport.reconnect_advice, {})
         self.transport._update_subscriptions.assert_called_with(payload[0])
         is_matching_response.assert_called_with(payload[0], message)
         self.transport._consume_message.assert_not_called()
@@ -398,7 +417,7 @@ class TestTransportBase(TestCase):
             payload, find_response_for=message)
 
         self.assertEqual(result, payload[0])
-        self.assertEqual(self.transport._reconnect_advice,
+        self.assertEqual(self.transport.reconnect_advice,
                          payload[0]["advice"])
         self.transport._update_subscriptions.assert_called_with(payload[0])
         is_matching_response.assert_called_with(payload[0], message)
@@ -425,7 +444,7 @@ class TestTransportBase(TestCase):
             payload, find_response_for=message)
 
         self.assertIsNone(result)
-        self.assertEqual(self.transport._reconnect_advice, {})
+        self.assertEqual(self.transport.reconnect_advice, {})
         self.transport._update_subscriptions.assert_called_with(payload[0])
         is_matching_response.assert_called_with(payload[0], message)
         self.transport._consume_message.assert_called_with(payload[0])
@@ -756,7 +775,7 @@ class TestTransportBase(TestCase):
         task.set_result("result")
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTING
-        self.transport._reconnect_advice = {
+        self.transport.reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
         }
@@ -778,7 +797,7 @@ class TestTransportBase(TestCase):
         task.set_exception(error)
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTED
-        self.transport._reconnect_advice = {
+        self.transport.reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
         }
@@ -800,7 +819,7 @@ class TestTransportBase(TestCase):
         task.set_exception(error)
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.DISCONNECTING
-        self.transport._reconnect_advice = {
+        self.transport.reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
         }
@@ -817,7 +836,7 @@ class TestTransportBase(TestCase):
 
     @mock.patch("aiocometd.transports.base.defer")
     def test_follow_advice_handshake(self, defer):
-        self.transport._reconnect_advice = {
+        self.transport.reconnect_advice = {
             "interval": 1,
             "reconnect": "handshake"
         }
@@ -839,7 +858,7 @@ class TestTransportBase(TestCase):
 
     @mock.patch("aiocometd.transports.base.defer")
     def test_follow_advice_retry(self, defer):
-        self.transport._reconnect_advice = {
+        self.transport.reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
         }
@@ -864,7 +883,7 @@ class TestTransportBase(TestCase):
         advices = ["none", "", None]
         for advice in advices:
             self.transport._state = TransportState.CONNECTED
-            self.transport._reconnect_advice = {
+            self.transport.reconnect_advice = {
                 "interval": 1,
                 "reconnect": advice
             }
@@ -1209,3 +1228,16 @@ class TestTransportBase(TestCase):
         result = self.transport.last_connect_result
 
         self.assertIsNone(result)
+
+    def test_request_timeout(self):
+        self.transport.reconnect_advice = {
+            "timeout": 2000
+        }
+
+        self.assertEqual(self.transport.request_timeout,
+                         self.transport.reconnect_advice["timeout"] / 1000)
+
+    def test_request_timeout_none(self):
+        self.transport.reconnect_advice = {}
+
+        self.assertIsNone(self.transport.request_timeout)

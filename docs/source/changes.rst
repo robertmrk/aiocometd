@@ -1,6 +1,12 @@
 Changelog
 =========
 
+0.3.0 (2018-05-04)
+------------------
+
+- Enable the usage of third party JSON libraries
+- Fix detection and recovery from network failures
+
 0.2.3 (2018-04-24)
 ------------------
 
