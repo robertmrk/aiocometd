@@ -226,6 +226,7 @@ class TestClient(TestCase):
         transport1.connection_type = DEFAULT_CONNECTION_TYPE
         transport1.client_id = "client_id"
         transport1.handshake = mock.CoroutineMock(return_value=response)
+        transport1.reconnect_advice = object()
         transport1.close = mock.CoroutineMock()
         transport2 = mock.MagicMock()
         transport2.connection_type = non_default_type
@@ -263,6 +264,7 @@ class TestClient(TestCase):
                     auth=self.client.auth,
                     json_dumps=self.client._json_dumps,
                     json_loads=self.client._json_loads,
+                    reconnect_advice=transport1.reconnect_advice,
                     loop=self.client._loop)
             ]
         )

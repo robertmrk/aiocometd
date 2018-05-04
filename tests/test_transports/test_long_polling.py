@@ -46,7 +46,8 @@ class TestLongPollingTransport(TestCase):
         session.post.assert_called_with(self.transport._url,
                                         json=payload,
                                         ssl=self.transport.ssl,
-                                        headers=headers)
+                                        headers=headers,
+                                        timeout=self.transport.request_timeout)
         response_mock.json.assert_called_with(loads=self.transport._json_loads)
         self.transport._consume_payload.assert_called_with(
             resp_data,
@@ -87,5 +88,6 @@ class TestLongPollingTransport(TestCase):
         session.post.assert_called_with(self.transport._url,
                                         json=payload,
                                         ssl=self.transport.ssl,
-                                        headers=headers)
+                                        headers=headers,
+                                        timeout=self.transport.request_timeout)
         self.transport._consume_payload.assert_not_called()

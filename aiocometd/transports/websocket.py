@@ -77,6 +77,10 @@ class WebSocketFactory:  # pylint: disable=too-few-public-methods
 @register_transport(ConnectionType.WEBSOCKET)
 class WebSocketTransport(TransportBase):
     """WebSocket type transport"""
+
+    #: The increase factor to use for request timeout
+    REQUEST_TIMEOUT_INCREASE_FACTOR = 1.2
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         #: channels used during the connect task, requests on these channels
@@ -93,6 +97,15 @@ class WebSocketTransport(TransportBase):
         self._socket_lock_short = asyncio.Lock()
         #: exclusive lock for the objects created by _socket_factory_long
         self._socket_lock_long = asyncio.Lock()
+
+    @property
+    def request_timeout(self):
+        timeout = super().request_timeout
+        if timeout:
+            # increase the timeout specified by the server to avoid timing out
+            # by mistake
+            timeout *= self.__class__.REQUEST_TIMEOUT_INCREASE_FACTOR
+        return timeout
 
     async def _get_socket(self, channel, headers):
         """Get a websocket object for the given *channel*
@@ -113,7 +126,8 @@ class WebSocketTransport(TransportBase):
         else:
             factory = self._socket_factory_short
 
-        return await factory(self.endpoint, ssl=self.ssl, headers=headers)
+        return await factory(self.endpoint, ssl=self.ssl, headers=headers,
+                             receive_timeout=self.request_timeout)
 
     def _get_socket_lock(self, channel):
         """Get an exclusive lock object for the given *channel*
@@ -125,6 +139,13 @@ class WebSocketTransport(TransportBase):
         if channel in self._long_duration_channels:
             return self._socket_lock_long
         return self._socket_lock_short
+
+    async def _reset_sockets(self):
+        """Close all socket factories and recreate them"""
+        await self._socket_factory_short.close()
+        self._socket_factory_short = WebSocketFactory(self._get_http_session)
+        await self._socket_factory_long.close()
+        self._socket_factory_long = WebSocketFactory(self._get_http_session)
 
     async def _send_final_payload(self, payload, *, headers):
         try:
@@ -139,6 +160,11 @@ class WebSocketTransport(TransportBase):
                     # been closed since the last time it was used
                     socket = await self._get_socket(channel, headers)
                     return await self._send_socket_payload(socket, payload)
+                except asyncio.TimeoutError:
+                    # reset all socket factories since after a timeout error
+                    # most likely all of them are invalid
+                    await self._reset_sockets()
+                    raise
                 except TransportConnectionClosed:
                     # if the socket was indeed closed, try to reopen the socket
                     # and send the payload, since the connection could've

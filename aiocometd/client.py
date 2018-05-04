@@ -215,6 +215,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
 
             if transport.connection_type != connection_type:
                 client_id = transport.client_id
+                advice = transport.reconnect_advice
                 await transport.close()
                 transport = create_transport(
                     connection_type,
@@ -226,6 +227,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
                     auth=self.auth,
                     json_dumps=self._json_dumps,
                     json_loads=self._json_loads,
+                    reconnect_advice=advice,
                     loop=self._loop)
             return transport
         except Exception:

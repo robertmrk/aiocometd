@@ -1,3 +1,4 @@
+import asyncio
 from asynctest import TestCase, mock
 
 from aiohttp import client_exceptions, WSMsgType
@@ -116,7 +117,8 @@ class TestWebSocketTransport(TestCase):
         self.transport._socket_factory_short.assert_called_with(
             self.transport._url,
             ssl=self.transport.ssl,
-            headers=headers
+            headers=headers,
+            receive_timeout=self.transport.request_timeout
         )
 
     async def test_get_socket_for_long_duration_request(self):
@@ -134,7 +136,8 @@ class TestWebSocketTransport(TestCase):
         self.transport._socket_factory_long.assert_called_with(
             self.transport._url,
             ssl=self.transport.ssl,
-            headers=headers
+            headers=headers,
+            receive_timeout=self.transport.request_timeout
         )
 
     def test_get_lock_for_short_request(self):
@@ -316,4 +319,68 @@ class TestWebSocketTransport(TestCase):
         lock.__aexit__.assert_called()
         self.transport._send_socket_payload.assert_has_calls([
             mock.call(socket, payload), mock.call(socket2, payload)
+        ])
+
+    async def test_send_final_payload_connection_timeout_error(self):
+        channel = "channel"
+        payload = [dict(channel=channel)]
+        lock = mock.MagicMock()
+        socket = object()
+        self.transport._get_socket = mock.CoroutineMock(return_value=socket)
+        self.transport._get_socket_lock = mock.MagicMock(return_value=lock)
+        error = asyncio.TimeoutError()
+        self.transport._send_socket_payload = \
+            mock.CoroutineMock(side_effect=error)
+        headers = object()
+        self.transport._reset_sockets = mock.CoroutineMock()
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await self.transport._send_final_payload(payload, headers=headers)
+
+        self.transport._get_socket.assert_called_with(channel, headers)
+        self.transport._get_socket_lock.assert_called_with(channel)
+        lock.__aenter__.assert_called()
+        lock.__aexit__.assert_called()
+        self.transport._send_socket_payload.assert_called_with(socket, payload)
+        self.transport._reset_sockets.assert_called()
+
+    @mock.patch("aiocometd.transports.websocket.super")
+    def test_request_timeout(self, super_mock):
+        super = mock.MagicMock()
+        super.request_timeout = 2000
+        super_mock.return_value = super
+
+        self.assertEqual(self.transport.request_timeout,
+                         super.request_timeout *
+                         type(self.transport).REQUEST_TIMEOUT_INCREASE_FACTOR)
+
+    @mock.patch("aiocometd.transports.websocket.super")
+    def test_request_timeout_none(self, super_mock):
+        super = mock.MagicMock()
+        super.request_timeout = None
+        super_mock.return_value = super
+
+        self.assertIsNone(self.transport.request_timeout)
+
+    @mock.patch("aiocometd.transports.websocket.WebSocketFactory")
+    async def test_reset_sockets(self, ws_factory_cls):
+        factory_short = object()
+        factory_long = object()
+        ws_factory_cls.side_effect = [factory_short, factory_long]
+        old_factory_short = mock.MagicMock()
+        old_factory_short.close = mock.CoroutineMock()
+        self.transport._socket_factory_short = old_factory_short
+        old_factory_long = mock.MagicMock()
+        old_factory_long.close = mock.CoroutineMock()
+        self.transport._socket_factory_long = old_factory_long
+
+        await self.transport._reset_sockets()
+
+        old_factory_short.close.assert_called()
+        old_factory_long.close.assert_called()
+        self.assertIs(self.transport._socket_factory_short, factory_short)
+        self.assertIs(self.transport._socket_factory_long, factory_long)
+        ws_factory_cls.assert_has_calls([
+            mock.call(self.transport._get_http_session),
+            mock.call(self.transport._get_http_session)
         ])
