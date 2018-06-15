@@ -1235,7 +1235,8 @@ class TestTransportBase(TestCase):
         }
 
         self.assertEqual(self.transport.request_timeout,
-                         self.transport.reconnect_advice["timeout"] / 1000)
+                         (self.transport.reconnect_advice["timeout"] / 1000) *
+                         type(self.transport).REQUEST_TIMEOUT_INCREASE_FACTOR)
 
     def test_request_timeout_none(self):
         self.transport.reconnect_advice = {}

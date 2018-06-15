@@ -29,6 +29,8 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
     """
     #: Timeout to give to HTTP session to close itself
     _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
+    #: The increase factor to use for request timeout
+    REQUEST_TIMEOUT_INCREASE_FACTOR = 1.2
 
     def __init__(self, *, url, incoming_queue, client_id=None,
                  reconnection_timeout=1, ssl=None, extensions=None, auth=None,
@@ -177,7 +179,11 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         """Number of seconds after a network request should time out"""
         timeout = self.reconnect_advice.get("timeout")
         if timeout:
+            # convert milliseconds to seconds
             timeout /= 1000
+            # increase the timeout specified by the server to avoid timing out
+            # by mistake
+            timeout *= self.__class__.REQUEST_TIMEOUT_INCREASE_FACTOR
         return timeout
 
     def _set_state_event(self, old_state, new_state):

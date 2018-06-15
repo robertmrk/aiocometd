@@ -78,9 +78,6 @@ class WebSocketFactory:  # pylint: disable=too-few-public-methods
 class WebSocketTransport(TransportBase):
     """WebSocket type transport"""
 
-    #: The increase factor to use for request timeout
-    REQUEST_TIMEOUT_INCREASE_FACTOR = 1.2
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         #: channels used during the connect task, requests on these channels
@@ -97,15 +94,6 @@ class WebSocketTransport(TransportBase):
         self._socket_lock_short = asyncio.Lock()
         #: exclusive lock for the objects created by _socket_factory_long
         self._socket_lock_long = asyncio.Lock()
-
-    @property
-    def request_timeout(self):
-        timeout = super().request_timeout
-        if timeout:
-            # increase the timeout specified by the server to avoid timing out
-            # by mistake
-            timeout *= self.__class__.REQUEST_TIMEOUT_INCREASE_FACTOR
-        return timeout
 
     async def _get_socket(self, channel, headers):
         """Get a websocket object for the given *channel*
