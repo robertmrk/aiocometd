@@ -344,24 +344,6 @@ class TestWebSocketTransport(TestCase):
         self.transport._send_socket_payload.assert_called_with(socket, payload)
         self.transport._reset_sockets.assert_called()
 
-    @mock.patch("aiocometd.transports.websocket.super")
-    def test_request_timeout(self, super_mock):
-        super = mock.MagicMock()
-        super.request_timeout = 2000
-        super_mock.return_value = super
-
-        self.assertEqual(self.transport.request_timeout,
-                         super.request_timeout *
-                         type(self.transport).REQUEST_TIMEOUT_INCREASE_FACTOR)
-
-    @mock.patch("aiocometd.transports.websocket.super")
-    def test_request_timeout_none(self, super_mock):
-        super = mock.MagicMock()
-        super.request_timeout = None
-        super_mock.return_value = super
-
-        self.assertIsNone(self.transport.request_timeout)
-
     @mock.patch("aiocometd.transports.websocket.WebSocketFactory")
     async def test_reset_sockets(self, ws_factory_cls):
         factory_short = object()
