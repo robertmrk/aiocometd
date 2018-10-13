@@ -52,12 +52,12 @@ class ServerError(AiocometdException):
     @property
     def message(self):
         """Error description"""
-        return self.args[0]
+        return self.args[0]  # pylint: disable=unsubscriptable-object
 
     @property
     def response(self):
         """Server response message"""
-        return self.args[1]
+        return self.args[1]  # pylint: disable=unsubscriptable-object
 
     @property
     def error(self):

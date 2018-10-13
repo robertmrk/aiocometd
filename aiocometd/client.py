@@ -379,9 +379,9 @@ class Client:  # pylint: disable=too-many-instance-attributes
             response = await self._get_message(self.connection_timeout)
             self._verify_response(response)
             return response
-        else:
-            raise ClientInvalidOperation("The client is closed and there are "
-                                         "no pending messages.")
+
+        raise ClientInvalidOperation("The client is closed and there are "
+                                     "no pending messages.")
 
     async def __aiter__(self):
         """Asynchronous iterator
@@ -466,7 +466,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
             # handle the completed task
             if get_task in done:
                 return get_task.result()
-            elif server_disconnected_task in done:
+
+            if server_disconnected_task in done:
                 await self._check_server_disconnected()
             else:
                 raise TransportTimeoutError("Lost connection with the "
