@@ -12,7 +12,8 @@ TESTS_REQUIRE = [
 ]
 DOCS_REQUIRE = [
     "Sphinx>=1.7,<2.0",
-    "sphinxcontrib-asyncio>=0.2.0"
+    "sphinxcontrib-asyncio>=0.2.0",
+    "sphinx-autodoc-typehints"
 ]
 EXAMPLES_REQUIRE = [
     "aioconsole>=0.1.7,<1.0.0"
