@@ -8,7 +8,8 @@ INSTALL_REQUIRES = [
 ]
 TESTS_REQUIRE = [
     "asynctest>=0.12.0,<1.0.0",
-    "coverage>=4.5,<5.0"
+    "coverage>=4.5,<5.0",
+    "docker>=3.5.1"
 ]
 DOCS_REQUIRE = [
     "Sphinx>=1.7,<2.0",
