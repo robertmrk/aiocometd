@@ -1,4 +1,3 @@
-import logging
 import asyncio
 
 from asynctest import TestCase, TestSuite
@@ -9,24 +8,37 @@ from tests.integration.helpers import DockerContainer
 
 
 class BaseTestCase(TestCase):
+    #: name of the docker image containing the CometD demo services
     IMAGE_NAME = "robertmrk/cometd-demos:alpine"
+    #: a name for the container
     CONTAINER_NAME = "aiocometd-integration-test"
+    #: TCP port exposed by the container
     CONTAINER_PORT = 8080
+    #: TCP port where the container's port will be published
     HOST_PORT = 9999
+    #: URL of the CometD service
     COMETD_URL = f"http://localhost:{HOST_PORT}/cometd"
+    #: CometD connection type
     CONNECTION_TYPE = None
 
+    #: container instance
     container = None
 
+    #: name of the chat room
     CHAT_ROOM = "demo"
+    #: channel where the room's messages get published
     CHAT_ROOM_CHANNEL = "/chat/" + CHAT_ROOM
+    #: channel where the room's memeber get published
     MEMBERS_CHANGED_CHANNEL = "/members/" + CHAT_ROOM
+    #: channel for adding user's to the room
     MEMBERS_CHANNEL = "/service/members"
+    #: name of the first user
     USER_NAME1 = "user1"
+    #: name of the second user
     USER_NAME2 = "user2"
 
     def setUp(self):
-        self.container.ensure_reacheable()
+        self.container.ensure_reachable()
 
     @classmethod
     def setUpClass(cls):
@@ -214,7 +226,7 @@ class TestErrorRecovery(BaseTestCase):
             await asyncio.sleep(3)
 
             # start the service
-            self.container.ensure_reacheable()
+            self.container.ensure_reachable()
             # give a few seconds for the client to recover the connection
             await asyncio.sleep(3)
 
@@ -247,7 +259,7 @@ class TestErrorRecovery(BaseTestCase):
             await asyncio.sleep(3)
 
             # start the service
-            self.container.ensure_reacheable()
+            self.container.ensure_reachable()
             # give a few seconds for the client to recover the connection
             await asyncio.sleep(3)
 
