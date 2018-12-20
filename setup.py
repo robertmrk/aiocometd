@@ -8,7 +8,10 @@ INSTALL_REQUIRES = [
 ]
 TESTS_REQUIRE = [
     "asynctest>=0.12.0,<1.0.0",
-    "coverage>=4.5,<5.0"
+    "coverage>=4.5,<5.0",
+    "docker>=3.5.1",
+    "flake8",
+    "pylint"
 ]
 DOCS_REQUIRE = [
     "Sphinx>=1.7,<2.0",
@@ -18,10 +21,7 @@ DOCS_REQUIRE = [
 EXAMPLES_REQUIRE = [
     "aioconsole>=0.1.7,<1.0.0"
 ]
-DEV_REQUIRE = [
-    "flake8",
-    "pylint"
-]
+DEV_REQUIRE = []
 
 
 def read(file_path):
