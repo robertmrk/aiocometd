@@ -79,6 +79,11 @@ Usage
         loop = asyncio.get_event_loop()
         loop.run_until_complete(chat())
 
+Documentation
+-------------
+
+https://aiocometd.readthedocs.io/
+
 .. _aiohttp: https://github.com/aio-libs/aiohttp/
 .. _CometD: https://cometd.org/
 .. _Comet: https://en.wikipedia.org/wiki/Comet_(programming)

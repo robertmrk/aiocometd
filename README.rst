@@ -79,6 +79,11 @@ Usage
         loop = asyncio.get_event_loop()
         loop.run_until_complete(chat())
 
+Documentation
+-------------
+
+https://aiocometd.readthedocs.io/
+
 Install
 -------
 
