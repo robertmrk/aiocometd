@@ -4,7 +4,7 @@ import ssl as ssl_module
 
 import aiohttp
 
-from .constants import ConnectionType
+from aiocometd.constants import ConnectionType
 
 
 #: Coroutine function

@@ -8,16 +8,16 @@ import json
 from typing import Optional, List, Union, Set, AsyncIterator, Type, Any
 from types import TracebackType
 
-from .transports import create_transport
-from .transports.abc import Transport
-from .constants import DEFAULT_CONNECTION_TYPE, ConnectionType, MetaChannel, \
-    SERVICE_CHANNEL_PREFIX, TransportState
-from .exceptions import ServerError, ClientInvalidOperation, \
+from aiocometd.transports import create_transport
+from aiocometd.transports.abc import Transport
+from aiocometd.constants import DEFAULT_CONNECTION_TYPE, ConnectionType, \
+    MetaChannel, SERVICE_CHANNEL_PREFIX, TransportState
+from aiocometd.exceptions import ServerError, ClientInvalidOperation, \
     TransportTimeoutError, ClientError
-from .utils import is_server_error_message
-from .extensions import Extension, AuthExtension
-from ._typing import ConnectionTypeSpec, SSLValidationMode, JsonObject, \
-    JsonDumper, JsonLoader
+from aiocometd.utils import is_server_error_message
+from aiocometd.extensions import Extension, AuthExtension
+from aiocometd.typing import ConnectionTypeSpec, SSLValidationMode, \
+    JsonObject, JsonDumper, JsonLoader
 
 
 LOGGER = logging.getLogger(__name__)

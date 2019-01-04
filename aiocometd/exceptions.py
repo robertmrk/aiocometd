@@ -13,7 +13,7 @@ Exception hierarchy::
 """
 from typing import Optional, List, cast
 
-from . import utils
+from aiocometd import utils
 
 
 class AiocometdException(Exception):

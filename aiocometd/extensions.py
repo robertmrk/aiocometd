@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from ._typing import Payload, Headers
+from aiocometd.typing import Payload, Headers
 
 
 class Extension(ABC):

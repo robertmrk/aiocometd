@@ -5,8 +5,8 @@ from functools import wraps
 from http import HTTPStatus
 from typing import Union, Optional, List, Any
 
-from .constants import META_CHANNEL_PREFIX, SERVICE_CHANNEL_PREFIX
-from ._typing import CoroFunction, JsonObject
+from aiocometd.constants import META_CHANNEL_PREFIX, SERVICE_CHANNEL_PREFIX
+from aiocometd.typing import CoroFunction, JsonObject
 
 
 def defer(coro_func: CoroFunction, delay: Union[int, float, None] = None, *,

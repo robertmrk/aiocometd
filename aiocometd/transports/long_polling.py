@@ -5,11 +5,11 @@ from typing import Any
 
 import aiohttp
 
-from ..constants import ConnectionType
-from .registry import register_transport
-from .base import TransportBase, Payload, Headers
-from ..exceptions import TransportError
-from .._typing import JsonObject
+from aiocometd.constants import ConnectionType
+from aiocometd.exceptions import TransportError
+from aiocometd.typing import JsonObject
+from aiocometd.transports.registry import register_transport
+from aiocometd.transports.base import TransportBase, Payload, Headers
 
 
 LOGGER = logging.getLogger(__name__)

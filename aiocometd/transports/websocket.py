@@ -8,11 +8,11 @@ from typing import Callable, Optional, AsyncContextManager, Any, Awaitable, \
 import aiohttp
 import aiohttp.client_ws
 
-from ..constants import ConnectionType, MetaChannel
-from .registry import register_transport
-from .base import TransportBase, Payload, Headers
-from ..exceptions import TransportError, TransportConnectionClosed
-from .._typing import JsonObject
+from aiocometd.constants import ConnectionType, MetaChannel
+from aiocometd.exceptions import TransportError, TransportConnectionClosed
+from aiocometd.typing import JsonObject
+from aiocometd.transports.registry import register_transport
+from aiocometd.transports.base import TransportBase, Payload, Headers
 
 
 LOGGER = logging.getLogger(__name__)
