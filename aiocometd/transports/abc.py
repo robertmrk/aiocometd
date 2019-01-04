@@ -1,58 +1,67 @@
 """Transport abstract base class definition"""
 from abc import ABC, abstractmethod
+from typing import Set, Optional, List
+
+from ..constants import ConnectionType, TransportState
+from .._typing import JsonObject
 
 
 class Transport(ABC):
     """Defines the operations that all transport classes should support"""
     @property
     @abstractmethod
-    def connection_type(self):
+    def connection_type(self) -> ConnectionType:
         """The transport's connection type"""
 
     @property
     @abstractmethod
-    def endpoint(self):
+    def endpoint(self) -> str:
         """CometD service url"""
 
     @property
     @abstractmethod
-    def client_id(self):
+    def client_id(self) -> Optional[str]:
         """Clinet id value assigned by the server"""
 
     @property
     @abstractmethod
-    def state(self):
+    def state(self) -> TransportState:
         """Current state of the transport"""
 
     @property
     @abstractmethod
-    def subscriptions(self):
+    def subscriptions(self) -> Set[str]:
         """Set of subscribed channels"""
 
     @property
     @abstractmethod
-    def last_connect_result(self):
+    def last_connect_result(self) -> Optional[JsonObject]:
         """Result of the last connect request"""
 
+    @property
     @abstractmethod
-    async def handshake(self, connection_types):
+    def reconnect_advice(self) -> JsonObject:
+        """Reconnection advice parameters returned by the server"""
+
+    @abstractmethod
+    async def handshake(self, connection_types: List[ConnectionType]) \
+            -> JsonObject:
         """Executes the handshake operation
 
-        :param list[ConnectionType] connection_types: list of connection types
+        :param connection_types: list of connection types
         :return: Handshake response
-        :rtype: dict
         :raises TransportError: When the network request fails.
         """
 
     @abstractmethod
-    async def connect(self):
+    async def connect(self) -> JsonObject:
         """Connect to the server
 
         The transport will try to start and maintain a continuous connection
         with the server, but it'll return with the response of the first
         successful connection as soon as possible.
 
-        :return dict: The response of the first successful connection.
+        :return: The response of the first successful connection.
         :raise TransportInvalidOperation: If the transport doesn't has a \
         client id yet, or if it's not in a :obj:`~TransportState.DISCONNECTED`\
         :obj:`state`.
@@ -60,7 +69,7 @@ class Transport(ABC):
         """
 
     @abstractmethod
-    async def disconnect(self):
+    async def disconnect(self) -> None:
         """Disconnect from server
 
         The disconnect message is only sent to the server if the transport is
@@ -68,16 +77,15 @@ class Transport(ABC):
         """
 
     @abstractmethod
-    async def close(self):
+    async def close(self) -> None:
         """Close transport and release resources"""
 
     @abstractmethod
-    async def subscribe(self, channel):
+    async def subscribe(self, channel: str) -> JsonObject:
         """Subscribe to *channel*
 
-        :param str channel: Name of the channel
+        :param channel: Name of the channel
         :return: Subscribe response
-        :rtype: dict
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
@@ -85,12 +93,11 @@ class Transport(ABC):
         """
 
     @abstractmethod
-    async def unsubscribe(self, channel):
+    async def unsubscribe(self, channel: str) -> JsonObject:
         """Unsubscribe from *channel*
 
-        :param str channel: Name of the channel
+        :param channel: Name of the channel
         :return: Unsubscribe response
-        :rtype: dict
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
@@ -98,13 +105,12 @@ class Transport(ABC):
         """
 
     @abstractmethod
-    async def publish(self, channel, data):
+    async def publish(self, channel: str, data: JsonObject) -> JsonObject:
         """Publish *data* to the given *channel*
 
-        :param str channel: Name of the channel
-        :param dict data: Data to send to the server
+        :param channel: Name of the channel
+        :param data: Data to send to the server
         :return: Publish response
-        :rtype: dict
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
@@ -112,8 +118,8 @@ class Transport(ABC):
         """
 
     @abstractmethod
-    async def wait_for_state(self, state):
+    async def wait_for_state(self, state: TransportState) -> None:
         """Waits for and returns when the transport enters the given *state*
 
-        :param TransportState state: A state value
+        :param state: A state value
         """

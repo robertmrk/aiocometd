@@ -11,7 +11,7 @@ Exception hierarchy::
             TransportConnectionClosed
         ServerError
 """
-from typing import Optional, List
+from typing import Optional, List, cast
 
 from . import utils
 
@@ -43,7 +43,8 @@ class TransportConnectionClosed(TransportError):
 class ServerError(AiocometdException):
     """CometD server side error"""
     # pylint: disable=useless-super-delegation
-    def __init__(self, message: str, response: utils.JsonObject) -> None:
+    def __init__(self, message: str, response: Optional[utils.JsonObject]) \
+            -> None:
         """If the *response* contains an error field it gets parsed
         according to the \
         `specs <https://docs.cometd.org/current/reference/#_code_error_code>`_
@@ -58,16 +59,21 @@ class ServerError(AiocometdException):
     @property
     def message(self) -> str:
         """Error description"""
-        return self.args[0]  # pylint: disable=unsubscriptable-object
+        # pylint: disable=unsubscriptable-object
+        return cast(str, self.args[0])
+        # pylint: enable=unsubscriptable-object
 
     @property
-    def response(self) -> utils.JsonObject:
+    def response(self) -> Optional[utils.JsonObject]:
         """Server response message"""
-        return self.args[1]  # pylint: disable=unsubscriptable-object
+        return cast(Optional[utils.JsonObject],
+                    self.args[1])  # pylint: disable=unsubscriptable-object
 
     @property
     def error(self) -> Optional[str]:
         """Error field in the :obj:`response`"""
+        if self.response is None:
+            return None
         return self.response.get("error")
 
     @property

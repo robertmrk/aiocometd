@@ -5,11 +5,8 @@ import logging
 from collections import abc
 from contextlib import suppress
 import json
-from typing import Optional, List, Union, Set, AsyncIterator, Type
-import ssl as ssl_module
+from typing import Optional, List, Union, Set, AsyncIterator, Type, Any
 from types import TracebackType
-
-import aiohttp
 
 from .transports import create_transport
 from .transports.abc import Transport
@@ -17,13 +14,13 @@ from .constants import DEFAULT_CONNECTION_TYPE, ConnectionType, MetaChannel, \
     SERVICE_CHANNEL_PREFIX, TransportState
 from .exceptions import ServerError, ClientInvalidOperation, \
     TransportTimeoutError, ClientError
-from .utils import is_server_error_message, JsonObject, JsonDumper, JsonLoader
+from .utils import is_server_error_message
 from .extensions import Extension, AuthExtension
+from ._typing import ConnectionTypeSpec, SSLValidationMode, JsonObject, \
+    JsonDumper, JsonLoader
 
 
 LOGGER = logging.getLogger(__name__)
-ConnectionTypeSpec = Union[ConnectionType, List[ConnectionType]]
-SSLValidationMode = Union[ssl_module.SSLContext, aiohttp.Fingerprint, bool]
 
 
 class Client:  # pylint: disable=too-many-instance-attributes
@@ -93,7 +90,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
             self._connection_types = self._DEFAULT_CONNECTION_TYPES
         self._loop = loop or asyncio.get_event_loop()
         #: queue for consuming incoming event messages
-        self._incoming_queue: Optional[asyncio.Queue] = None
+        self._incoming_queue: "Optional[asyncio.Queue[JsonObject]]" = None
         #: transport object
         self._transport: Optional[Transport] = None
         #: marks whether the client is open or closed
@@ -394,7 +391,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         raise ClientInvalidOperation("The client is closed and there are "
                                      "no pending messages.")
 
-    async def __aiter__(self) -> AsyncIterator:
+    async def __aiter__(self) -> AsyncIterator[JsonObject]:
         """Asynchronous iterator
 
         :raise ServerError: If the client receives a confirmation message \
@@ -444,7 +441,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         connection with the server in :obj:`connection_timeout` time.
         :raise ServerError: If the connection gets closed by the server.
         """
-        tasks = []
+        tasks: List[asyncio.Future[Any]] = []
         # task waiting on connection timeout
         if connection_timeout:
             timeout_task = asyncio.ensure_future(

@@ -23,11 +23,11 @@ class TestWebSocketFactory(TestCase):
         args = [object()]
         kwargs = {"key": "value"}
 
-        await self.factory._enter(*args, **kwargs)
+        result = await self.factory._enter(*args, **kwargs)
 
         self.session.ws_connect.assert_called_with(*args, **kwargs)
         self.assertEqual(self.factory._context, context)
-        self.assertEqual(self.factory._socket, socket)
+        self.assertEqual(result, socket)
 
     async def test_exit(self):
         socket = object()
@@ -69,6 +69,8 @@ class TestWebSocketFactory(TestCase):
         await self.factory(*args, **kwargs)
 
         self.factory._enter.assert_called_with(*args, **kwargs)
+        self.assertEqual(self.factory._socket,
+                         self.factory._enter.return_value)
 
     async def test_call_socket_returns_open_socket(self):
         self.factory._enter = mock.CoroutineMock()

@@ -3,15 +3,10 @@ import re
 import asyncio
 from functools import wraps
 from http import HTTPStatus
-from typing import Union, Optional, List, Awaitable, Callable, Dict, Any
+from typing import Union, Optional, List, Any
 
 from .constants import META_CHANNEL_PREFIX, SERVICE_CHANNEL_PREFIX
-
-
-CoroFunction = Callable[..., Awaitable[Any]]
-JsonObject = Dict[str, Any]
-JsonDumper = Callable[[JsonObject], str]
-JsonLoader = Callable[[str], JsonObject]
+from ._typing import CoroFunction, JsonObject
 
 
 def defer(coro_func: CoroFunction, delay: Union[int, float, None] = None, *,
@@ -25,9 +20,10 @@ def defer(coro_func: CoroFunction, delay: Union[int, float, None] = None, *,
     :return: Coroutine function wrapper
     """
     @wraps(coro_func)
-    async def wrapper(*args, **kwargs):  # pylint: disable=missing-docstring
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:  \
+            # pylint: disable=missing-docstring
         if delay:
-            await asyncio.sleep(delay, loop=loop)
+            await asyncio.sleep(delay, loop=loop)  # type: ignore
         return await coro_func(*args, **kwargs)
 
     return wrapper

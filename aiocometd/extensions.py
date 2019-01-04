@@ -1,15 +1,14 @@
 """Extension classes"""
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional
+from typing import Optional
 
-from .utils import JsonObject
+from ._typing import Payload, Headers
 
 
 class Extension(ABC):
     """Defines operations supported by extensions"""
     @abstractmethod
-    async def outgoing(self, payload: List[JsonObject],
-                       headers: Dict[str, str]) -> None:
+    async def outgoing(self, payload: Payload, headers: Headers) -> None:
         """Process outgoing *payload* and *headers*
 
         Called just before a payload is sent
@@ -19,8 +18,8 @@ class Extension(ABC):
         """
 
     @abstractmethod
-    async def incoming(self, payload: List[JsonObject],
-                       headers: Optional[Dict[str, str]] = None) -> None:
+    async def incoming(self, payload: Payload,
+                       headers: Optional[Headers] = None) -> None:
         """Process incoming *payload* and *headers*
 
         Called just after a payload is received

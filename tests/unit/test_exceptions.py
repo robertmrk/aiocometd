@@ -29,7 +29,16 @@ class TestServerError(TestCase):
 
         self.assertEqual(error.message, "description message")
         self.assertEqual(error.response, response)
-        self.assertEqual(error.error, None)
+        self.assertIsNone(error.error)
+
+    def test_properties_on_no_response(self):
+        response = None
+
+        error = ServerError("description message", response)
+
+        self.assertEqual(error.message, "description message")
+        self.assertIsNone(error.response)
+        self.assertIsNone(error.error)
 
     @mock.patch("aiocometd.exceptions.utils")
     def test_error_code(self, utils):
