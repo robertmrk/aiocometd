@@ -1,11 +1,13 @@
+dist: xenial
+sudo: required
+
 language: python
 python:
 - "3.6"
-before_install:
-- pip install -q coveralls
-install:
-- pip install .[tests]
-script:
-- coverage run -m unittest discover tests
-after_success:
-- coveralls
+- "3.7"
+
+services:
+  - docker
+
+install: pip install tox-travis
+script: tox

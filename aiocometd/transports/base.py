@@ -4,16 +4,20 @@ import logging
 from abc import abstractmethod
 from contextlib import suppress
 import json
+from typing import Union, Optional, List, Set, Awaitable, Any
 
 import aiohttp
 
-from .abc import Transport
-from ..constants import MetaChannel, TransportState, HANDSHAKE_MESSAGE, \
-    CONNECT_MESSAGE, DISCONNECT_MESSAGE, SUBSCRIBE_MESSAGE, \
-    UNSUBSCRIBE_MESSAGE, PUBLISH_MESSAGE
-from ..utils import defer, is_matching_response, is_auth_error_message, \
-    is_server_error_message, is_event_message
-from ..exceptions import TransportInvalidOperation, TransportError
+from aiocometd.constants import ConnectionType, MetaChannel, TransportState, \
+    HANDSHAKE_MESSAGE, CONNECT_MESSAGE, DISCONNECT_MESSAGE, \
+    SUBSCRIBE_MESSAGE, UNSUBSCRIBE_MESSAGE, PUBLISH_MESSAGE
+from aiocometd.utils import defer, is_matching_response, \
+    is_auth_error_message, is_server_error_message, is_event_message
+from aiocometd.exceptions import TransportInvalidOperation, TransportError
+from aiocometd.typing import SSLValidationMode, JsonObject, JsonLoader, \
+    JsonDumper, Headers, Payload
+from aiocometd.extensions import Extension, AuthExtension
+from aiocometd.transports.abc import Transport
 
 
 LOGGER = logging.getLogger(__name__)
@@ -32,18 +36,24 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
     #: The increase factor to use for request timeout
     REQUEST_TIMEOUT_INCREASE_FACTOR = 1.2
 
-    def __init__(self, *, url, incoming_queue, client_id=None,
-                 reconnection_timeout=1, ssl=None, extensions=None, auth=None,
-                 json_dumps=json.dumps, json_loads=json.loads,
-                 reconnect_advice=None, loop=None):
+    def __init__(self, *, url: str,
+                 incoming_queue: "asyncio.Queue[JsonObject]",
+                 client_id: Optional[str] = None,
+                 reconnection_timeout: Union[int, float] = 1,
+                 ssl: Optional[SSLValidationMode] = None,
+                 extensions: Optional[List[Extension]] = None,
+                 auth: Optional[AuthExtension] = None,
+                 json_dumps: JsonDumper = json.dumps,
+                 json_loads: JsonLoader = json.loads,
+                 reconnect_advice: Optional[JsonObject] = None,
+                 loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
         """
-        :param str url: CometD service url
-        :param asyncio.Queue incoming_queue: Queue for consuming incoming event
+        :param url: CometD service url
+        :param incoming_queue: Queue for consuming incoming event
                                              messages
-        :param str client_id: Clinet id value assigned by the server
+        :param client_id: Clinet id value assigned by the server
         :param reconnection_timeout: The time to wait before trying to \
         reconnect to the server after a network failure
-        :type reconnection_timeout: None or int or float
         :param ssl: SSL validation mode. None for default SSL check \
         (:func:`ssl.create_default_context` is used), False for skip SSL \
         certificate validation, \
@@ -52,16 +62,12 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         validation, :obj:`ssl.SSLContext` for custom SSL certificate \
         validation.
         :param extensions: List of protocol extension objects
-        :type extensions: list[Extension] or None
-        :param AuthExtension auth: An auth extension
+        :param auth: An auth extension
         :param json_dumps: Function for JSON serialization, the default is \
         :func:`json.dumps`
-        :type json_dumps: :func:`callable`
         :param json_loads: Function for JSON deserialization, the default is \
         :func:`json.loads`
-        :type json_loads: :func:`callable`
         :param reconnect_advice: Initial reconnect advice
-        :type reconnect_advice: dict or None
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -79,11 +85,9 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         #: session
         self._message_id = 0
         #: reconnection advice parameters returned by the server
-        self.reconnect_advice = reconnect_advice
-        if self.reconnect_advice is None:
-            self.reconnect_advice = {}
+        self._reconnect_advice: JsonObject = reconnect_advice or dict()
         #: set of subscribed channels
-        self._subscriptions = set()
+        self._subscriptions: Set[str] = set()
         #: boolean to mark whether to resubscribe on connect
         self._subscribe_on_connect = False
         #: dictionary of TransportState and asyncio.Event pairs
@@ -91,13 +95,13 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         #: current state of the transport
         self._state = TransportState.DISCONNECTED
         #: asyncio connection task
-        self._connect_task = None
+        self._connect_task: Optional[asyncio.Future[JsonObject]] = None
         #: time to wait before reconnecting after a network failure
         self._reconnect_timeout = reconnection_timeout
         #: SSL validation mode
         self.ssl = ssl
         #: http session
-        self._http_session = None
+        self._http_session: Optional[aiohttp.ClientSession] = None
         #: List of protocol extension objects
         self._extensions = extensions or []
         #: An auth extension
@@ -107,7 +111,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         #: Function for JSON deserialization
         self._json_loads = json_loads
 
-    async def _get_http_session(self):
+    async def _get_http_session(self) -> aiohttp.ClientSession:
         """Factory method for getting the current HTTP session
 
         :return: The current session if it's not None, otherwise it creates a
@@ -123,7 +127,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
             )
         return self._http_session
 
-    async def _close_http_session(self):
+    async def _close_http_session(self) -> None:
         """Close the http session if it's not already closed"""
         # graceful shutdown recommended by the documentation
         # https://aiohttp.readthedocs.io/en/stable/client_advanced.html\
@@ -133,86 +137,90 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
             await asyncio.sleep(self._HTTP_SESSION_CLOSE_TIMEOUT)
 
     @property
-    def connection_type(self):
+    def connection_type(self) -> ConnectionType:  # pragma: no cover
         """The transport's connection type"""
-        return None  # pragma: no cover
+        return None  # type: ignore
 
     @property
-    def endpoint(self):
+    def endpoint(self) -> str:
         """CometD service url"""
         return self._url
 
     @property
-    def client_id(self):
+    def client_id(self) -> Optional[str]:
         """clinet id value assigned by the server"""
         return self._client_id
 
     @property
-    def subscriptions(self):
+    def subscriptions(self) -> Set[str]:
         """Set of subscribed channels"""
         return self._subscriptions
 
     @property
-    def last_connect_result(self):
+    def last_connect_result(self) -> Optional[JsonObject]:
         """Result of the last connect request"""
         if self._connect_task and self._connect_task.done():
             return self._connect_task.result()
         return None
 
     @property
-    def state(self):
+    def reconnect_advice(self) -> JsonObject:
+        """Reconnection advice parameters returned by the server"""
+        return self._reconnect_advice
+
+    @property
+    def state(self) -> TransportState:
         """Current state of the transport"""
         return self._state
 
     @property
-    def _state(self):
+    def _state(self) -> TransportState:
         """Current state of the transport"""
-        return self.__dict__.setdefault("_state")
+        return self.__dict__.get("_state", TransportState.DISCONNECTED)
 
     @_state.setter
-    def _state(self, value):
+    def _state(self, value: TransportState) -> None:
         self._set_state_event(self._state, value)
         self.__dict__["_state"] = value
 
     @property
-    def request_timeout(self):
+    def request_timeout(self) -> Optional[Union[int, float]]:
         """Number of seconds after a network request should time out"""
         timeout = self.reconnect_advice.get("timeout")
-        if timeout:
+        if isinstance(timeout, (int, float)):
             # convert milliseconds to seconds
             timeout /= 1000
             # increase the timeout specified by the server to avoid timing out
             # by mistake
-            timeout *= self.__class__.REQUEST_TIMEOUT_INCREASE_FACTOR
-        return timeout
+            timeout *= self.REQUEST_TIMEOUT_INCREASE_FACTOR
+            return timeout
+        return None
 
-    def _set_state_event(self, old_state, new_state):
+    def _set_state_event(self, old_state: TransportState,
+                         new_state: TransportState) -> None:
         """Set event associated with the *new_state* and clear the event for
         the *old_state*
 
         :param old_state: Old state value
-        :type old_state: TransportState or None
         :param new_state: New state value
-        :type new_state: TransportState
         """
         if new_state != old_state:
-            if old_state is not None:
-                self._state_events[old_state].clear()
+            self._state_events[old_state].clear()
             self._state_events[new_state].set()
 
-    async def wait_for_state(self, state):
+    async def wait_for_state(self, state: TransportState) -> None:
         """Waits for and returns when the transport enters the given *state*
 
         :param TransportState state: A state value
         """
         await self._state_events[state].wait()
 
-    async def handshake(self, connection_types):
+    async def handshake(self, connection_types: List[ConnectionType]) \
+            -> JsonObject:
         """Executes the handshake operation
 
-        :param list[ConnectionType] connection_types: list of connection types
+        :param connection_types: list of connection types
         :return: Handshake response
-        :rtype: dict
         :raises TransportError: When the network request fails.
         """
         # reset message id for a new client session
@@ -237,11 +245,11 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
             self._subscribe_on_connect = True
         return response_message
 
-    def _finalize_message(self, message):
+    def _finalize_message(self, message: JsonObject) -> None:
         """Update the ``id``, ``clientId`` and ``connectionType`` message
         fields as a side effect if they're are present in the *message*.
 
-        :param dict message: Outgoing message
+        :param message: Outgoing message
         """
         if "id" in message:
             message["id"] = str(self._message_id)
@@ -253,14 +261,14 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         if "connectionType" in message:
             message["connectionType"] = self.connection_type.value
 
-    def _finalize_payload(self, payload):
+    def _finalize_payload(self, payload: Union[JsonObject, Payload]) \
+            -> None:
         """Update the ``id``, ``clientId`` and ``connectionType`` message
         fields in the *payload*, as a side effect if they're are present in
         the *message*. The *payload* can be either a single message or a list
         of messages.
 
         :param payload: A message or a list of messages
-        :type payload: dict or list[dict]
         """
         if isinstance(payload, list):
             for item in payload:
@@ -268,20 +276,21 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         else:
             self._finalize_message(payload)
 
-    async def _send_message(self, message, **kwargs):
+    async def _send_message(self, message: JsonObject, **kwargs: Any) \
+            -> JsonObject:
         """Send message to server
 
-        :param dict message: A message
+        :param message: A message
         :param kwargs: Optional key-value pairs that'll be used to update the \
         the values in the *message*
         :return: Response message
-        :rtype: dict
         :raises TransportError: When the network request fails.
         """
         message.update(kwargs)
         return await self._send_payload_with_auth([message])
 
-    async def _send_payload_with_auth(self, payload):
+    async def _send_payload_with_auth(self, payload: Payload) \
+            -> JsonObject:
         """Finalize and send *payload* to server and retry on authentication
         failure
 
@@ -289,9 +298,8 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         response message can be provided for the first message in the
         *payload*.
 
-        :param list[dict] payload: A list of messages
+        :param payload: A list of messages
         :return: The response message for the first message in the *payload*
-        :rtype: dict
         :raises TransportError: When the network request fails.
         """
         response = await self._send_payload(payload)
@@ -305,30 +313,30 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         # otherwise return the response
         return response
 
-    async def _send_payload(self, payload):
+    async def _send_payload(self, payload: Payload) -> JsonObject:
         """Finalize and send *payload* to server
 
         Finalize and send the *payload* to the server and return once a
         response message can be provided for the first message in the
         *payload*.
 
-        :param list[dict] payload: A list of messages
+        :param payload: A list of messages
         :return: The response message for the first message in the *payload*
-        :rtype: dict
         :raises TransportError: When the network request fails.
         """
         self._finalize_payload(payload)
-        headers = {}
+        headers: Headers = {}
         # process the outgoing payload with the extensions
         await self._process_outgoing_payload(payload, headers)
         # send the payload to the server
         return await self._send_final_payload(payload, headers=headers)
 
-    async def _process_outgoing_payload(self, payload, headers):
+    async def _process_outgoing_payload(self, payload: Payload,
+                                        headers: Headers) -> None:
         """Process the outgoing *payload* and *headers* with the extensions
 
-        :param list[dict] payload: A list of messages
-        :param dict headers: Headers to send
+        :param payload: A list of messages
+        :param headers: Headers to send
         """
         for extension in self._extensions:
             await extension.outgoing(payload, headers)
@@ -336,7 +344,8 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
             await self._auth.outgoing(payload, headers)
 
     @abstractmethod
-    async def _send_final_payload(self, payload, *, headers):
+    async def _send_final_payload(self, payload: Payload, *,
+                                  headers: Headers) -> JsonObject:
         """Send *payload* to server
 
         Send the *payload* to the server and return once a
@@ -347,14 +356,13 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         consumers. To enqueue the received messages :meth:`_consume_payload`
         can be used.
 
-        :param list[dict] payload: A list of messages
-        :param dict headers: Headers to send
+        :param payload: A list of messages
+        :param headers: Headers to send
         :return: The response message for the first message in the *payload*
-        :rtype: dict
         :raises TransportError: When the network request fails.
         """
 
-    async def _consume_message(self, response_message):
+    async def _consume_message(self, response_message: JsonObject) -> None:
         """Enqueue the *response_message* for consumers if it's a type of
         message that consumers should receive
 
@@ -364,7 +372,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
                 is_event_message(response_message)):
             await self.incoming_queue.put(response_message)
 
-    def _update_subscriptions(self, response_message):
+    def _update_subscriptions(self, response_message: JsonObject) -> None:
         """Update the set of subscriptions based on the *response_message*
 
        :param response_message: A response message
@@ -387,33 +395,32 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
                     response_message["subscription"] in self._subscriptions):
                 self._subscriptions.remove(response_message["subscription"])
 
-    async def _process_incoming_payload(self, payload, headers=None):
+    async def _process_incoming_payload(self, payload: Payload,
+                                        headers: Optional[Headers] = None) \
+            -> None:
         """Process incoming *payload* and *headers* with the extensions
 
         :param payload: A list of response messages
-        :type payload: list[dict]
         :param headers: Received headers
-        :type headers: dict or None
         """
         if self._auth:
             await self._auth.incoming(payload, headers)
         for extension in self._extensions:
             await extension.incoming(payload, headers)
 
-    async def _consume_payload(self, payload, *, headers=None,
-                               find_response_for=None):
+    async def _consume_payload(self, payload: Payload, *,
+                               headers: Optional[Headers] = None,
+                               find_response_for: JsonObject) \
+            -> Optional[JsonObject]:
         """Enqueue event messages for the consumers and update the internal
         state of the transport, based on response messages in the *payload*.
 
         :param payload: A list of response messages
-        :type payload: list[dict]
         :param headers: Received headers
-        :type headers: dict or None
-        :param dict find_response_for: Find and return the matching \
+        :param find_response_for: Find and return the matching \
         response message for the given *find_response_for* message.
         :return: The response message for the *find_response_for* message, \
         otherwise ``None``
-        :rtype: dict or None
         """
         # process incoming payload and headers with the extensions
         await self._process_incoming_payload(payload, headers)
@@ -424,7 +431,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
             # if there is an advice in the message then update the transport's
             # reconnect advice
             if "advice" in message:
-                self.reconnect_advice = message["advice"]
+                self._reconnect_advice = message["advice"]
 
             # update subscriptions based on responses
             self._update_subscriptions(message)
@@ -439,7 +446,8 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
             await self._consume_message(message)
         return result
 
-    def _start_connect_task(self, coro):
+    def _start_connect_task(self, coro: Awaitable[JsonObject]) \
+            -> Awaitable[JsonObject]:
         """Wrap the *coro* in a future and schedule it
 
         The future is stored internally in :obj:`_connect_task`. The future's
@@ -452,7 +460,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         self._connect_task.add_done_callback(self._connect_done)
         return self._connect_task
 
-    async def _stop_connect_task(self):
+    async def _stop_connect_task(self) -> None:
         """Stop the connection task
 
         If no connect task exists or if it's done it does nothing.
@@ -461,14 +469,14 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
             self._connect_task.cancel()
             await asyncio.wait([self._connect_task])
 
-    async def connect(self):
+    async def connect(self) -> JsonObject:
         """Connect to the server
 
         The transport will try to start and maintain a continuous connection
         with the server, but it'll return with the response of the first
         successful connection as soon as possible.
 
-        :return dict: The response of the first successful connection.
+        :return: The response of the first successful connection.
         :raise TransportInvalidOperation: If the transport doesn't has a \
         client id yet, or if it's not in a :obj:`~TransportState.DISCONNECTED`\
         :obj:`state`.
@@ -486,11 +494,10 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         self._state = TransportState.CONNECTING
         return await self._start_connect_task(self._connect())
 
-    async def _connect(self):
+    async def _connect(self) -> JsonObject:
         """Connect to the server
 
         :return: Connect response
-        :rtype: dict
         :raises TransportError: When the network request fails.
         """
         message = CONNECT_MESSAGE.copy()
@@ -498,21 +505,21 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         if self._subscribe_on_connect and self.subscriptions:
             for subscription in self.subscriptions:
                 extra_message = SUBSCRIBE_MESSAGE.copy()
-                extra_message["subscription"] = subscription
+                extra_message["subscription"] = subscription  # type: ignore
                 payload.append(extra_message)
         result = await self._send_payload_with_auth(payload)
         self._subscribe_on_connect = not result["successful"]
         return result
 
-    def _connect_done(self, future):
+    def _connect_done(self, future: "asyncio.Future[JsonObject]") -> None:
         """Consume the result of the *future* and follow the server's \
         connection advice if the transport is still connected
 
-        :param asyncio.Future future: A :obj:`_connect` or :obj:`handshake` \
+        :param future: A :obj:`_connect` or :obj:`handshake` \
         future
         """
         try:
-            result = future.result()
+            result: Union[JsonObject, Exception] = future.result()
             reconnect_timeout = self.reconnect_advice["interval"]
             self._state = TransportState.CONNECTED
         except Exception as error:  # pylint: disable=broad-except
@@ -526,7 +533,8 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         if self.state != TransportState.DISCONNECTING:
             self._follow_advice(reconnect_timeout)
 
-    def _follow_advice(self, reconnect_timeout):
+    def _follow_advice(self, reconnect_timeout: Union[int, float, None]) \
+            -> None:
         """Follow the server's reconnect advice
 
         Either a :obj:`_connect` or :obj:`handshake` operation is started
@@ -559,7 +567,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
                            "will be scheduled.")
             self._state = TransportState.SERVER_DISCONNECTED
 
-    async def disconnect(self):
+    async def disconnect(self) -> None:
         """Disconnect from server
 
         The disconnect message is only sent to the server if the transport is
@@ -577,16 +585,15 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         finally:
             self._state = TransportState.DISCONNECTED
 
-    async def close(self):
+    async def close(self) -> None:
         """Close transport and release resources"""
         await self._close_http_session()
 
-    async def subscribe(self, channel):
+    async def subscribe(self, channel: str) -> JsonObject:
         """Subscribe to *channel*
 
-        :param str channel: Name of the channel
+        :param channel: Name of the channel
         :return: Subscribe response
-        :rtype: dict
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
@@ -599,12 +606,11 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         return await self._send_message(SUBSCRIBE_MESSAGE.copy(),
                                         subscription=channel)
 
-    async def unsubscribe(self, channel):
+    async def unsubscribe(self, channel: str) -> JsonObject:
         """Unsubscribe from *channel*
 
-        :param str channel: Name of the channel
+        :param channel: Name of the channel
         :return: Unsubscribe response
-        :rtype: dict
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`
@@ -617,13 +623,12 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         return await self._send_message(UNSUBSCRIBE_MESSAGE.copy(),
                                         subscription=channel)
 
-    async def publish(self, channel, data):
+    async def publish(self, channel: str, data: JsonObject) -> JsonObject:
         """Publish *data* to the given *channel*
 
-        :param str channel: Name of the channel
-        :param dict data: Data to send to the server
+        :param channel: Name of the channel
+        :param data: Data to send to the server
         :return: Publish response
-        :rtype: dict
         :raise TransportInvalidOperation: If the transport is not in the \
         :obj:`~TransportState.CONNECTED` or :obj:`~TransportState.CONNECTING` \
         :obj:`state`

@@ -5,13 +5,19 @@ import logging
 from collections import abc
 from contextlib import suppress
 import json
+from typing import Optional, List, Union, Set, AsyncIterator, Type, Any
+from types import TracebackType
 
-from .transports import create_transport
-from .constants import DEFAULT_CONNECTION_TYPE, ConnectionType, MetaChannel, \
-    SERVICE_CHANNEL_PREFIX, TransportState
-from .exceptions import ServerError, ClientInvalidOperation, \
+from aiocometd.transports import create_transport
+from aiocometd.transports.abc import Transport
+from aiocometd.constants import DEFAULT_CONNECTION_TYPE, ConnectionType, \
+    MetaChannel, SERVICE_CHANNEL_PREFIX, TransportState
+from aiocometd.exceptions import ServerError, ClientInvalidOperation, \
     TransportTimeoutError, ClientError
-from .utils import is_server_error_message
+from aiocometd.utils import is_server_error_message
+from aiocometd.extensions import Extension, AuthExtension
+from aiocometd.typing import ConnectionTypeSpec, SSLValidationMode, \
+    JsonObject, JsonDumper, JsonLoader
 
 
 LOGGER = logging.getLogger(__name__)
@@ -31,21 +37,25 @@ class Client:  # pylint: disable=too-many-instance-attributes
     _DEFAULT_CONNECTION_TYPES = [ConnectionType.WEBSOCKET,
                                  ConnectionType.LONG_POLLING]
 
-    def __init__(self, url, connection_types=None, *,
-                 connection_timeout=10.0, ssl=None, max_pending_count=100,
-                 extensions=None, auth=None, json_dumps=json.dumps,
-                 json_loads=json.loads, loop=None):
+    def __init__(self, url: str,
+                 connection_types: Optional[ConnectionTypeSpec] = None, *,
+                 connection_timeout: Union[int, float] = 10.0,
+                 ssl: Optional[SSLValidationMode] = None,
+                 max_pending_count: int = 100,
+                 extensions: Optional[List[Extension]] = None,
+                 auth: Optional[AuthExtension] = None,
+                 json_dumps: JsonDumper = json.dumps,
+                 json_loads: JsonLoader = json.loads,
+                 loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
         """
-        :param str url: CometD service url
+        :param url: CometD service url
         :param connection_types: List of connection types in order of \
         preference, or a single connection type name. If ``None``, \
         [:obj:`~ConnectionType.WEBSOCKET`, \
         :obj:`~ConnectionType.LONG_POLLING`] will be used as a default value.
-        :type connection_types: list[ConnectionType], ConnectionType or None
         :param connection_timeout: The maximum amount of time to wait for the \
         transport to re-establish a connection with the server when the \
         connection fails.
-        :type connection_timeout: int, float or None
         :param ssl: SSL validation mode. None for default SSL check \
         (:func:`ssl.create_default_context` is used), False for skip SSL \
         certificate validation, \
@@ -53,20 +63,17 @@ class Client:  # pylint: disable=too-many-instance-attributes
         client_reference.html#aiohttp.Fingerprint>`_ for fingerprint \
         validation, :obj:`ssl.SSLContext` for custom SSL certificate \
         validation.
-        :param int max_pending_count: The maximum number of messages to \
+        :param max_pending_count: The maximum number of messages to \
         prefetch from the server. If the number of prefetched messages reach \
         this size then the connection will be suspended, until messages are \
         consumed. \
         If it is less than or equal to zero, the count is infinite.
         :param extensions: List of protocol extension objects
-        :type extensions: list[Extension] or None
-        :param AuthExtension auth: An auth extension
+        :param auth: An auth extension
         :param json_dumps: Function for JSON serialization, the default is \
         :func:`json.dumps`
-        :type json_dumps: :func:`callable`
         :param json_loads: Function for JSON deserialization, the default is \
         :func:`json.loads`
-        :type json_loads: :func:`callable`
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -75,7 +82,6 @@ class Client:  # pylint: disable=too-many-instance-attributes
         #: CometD service url
         self.url = url
         #: List of connection types to use in order of preference
-        self._connection_types = None
         if isinstance(connection_types, ConnectionType):
             self._connection_types = [connection_types]
         elif isinstance(connection_types, abc.Iterable):
@@ -84,9 +90,9 @@ class Client:  # pylint: disable=too-many-instance-attributes
             self._connection_types = self._DEFAULT_CONNECTION_TYPES
         self._loop = loop or asyncio.get_event_loop()
         #: queue for consuming incoming event messages
-        self._incoming_queue = None
+        self._incoming_queue: "Optional[asyncio.Queue[JsonObject]]" = None
         #: transport object
-        self._transport = None
+        self._transport: Optional[Transport] = None
         #: marks whether the client is open or closed
         self._closed = True
         #: The maximum amount of time to wait for the transport to re-establish
@@ -105,7 +111,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         #: Function for JSON deserialization
         self._json_loads = json_loads
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Formal string representation"""
         cls_name = type(self).__name__
         fmt_spec = "{}({}, {}, connection_timeout={}, ssl={}, " \
@@ -121,19 +127,19 @@ class Client:  # pylint: disable=too-many-instance-attributes
                                reprlib.repr(self._loop))
 
     @property
-    def closed(self):
+    def closed(self) -> bool:
         """Marks whether the client is open or closed"""
         return self._closed
 
     @property
-    def subscriptions(self):
+    def subscriptions(self) -> Set[str]:
         """Set of subscribed channels"""
         if self._transport:
             return self._transport.subscriptions
         return set()
 
     @property
-    def connection_type(self):
+    def connection_type(self) -> Optional[ConnectionType]:
         """The current connection type in use if the client is open,
         otherwise ``None``"""
         if self._transport is not None:
@@ -141,7 +147,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         return None
 
     @property
-    def pending_count(self):
+    def pending_count(self) -> int:
         """The number of pending incoming messages
 
         Once :obj:`open` is called the client starts listening for messages
@@ -153,19 +159,19 @@ class Client:  # pylint: disable=too-many-instance-attributes
         return self._incoming_queue.qsize()
 
     @property
-    def has_pending_messages(self):
+    def has_pending_messages(self) -> bool:
         """Marks whether the client has any pending incoming messages"""
         return self.pending_count > 0
 
-    def _pick_connection_type(self, connection_types):
+    def _pick_connection_type(self, connection_types: List[str]) \
+            -> Optional[ConnectionType]:
         """Pick a connection type based on the  *connection_types*
         supported by the server and on the user's preferences
 
-        :param list[str] connection_types: Connection types \
+        :param connection_types: Connection types \
         supported by the server
         :return: The connection type with the highest precedence \
         which is supported by the server
-        :rtype: ConnectionType or None
         """
         server_connection_types = []
         for type_string in connection_types:
@@ -180,12 +186,11 @@ class Client:  # pylint: disable=too-many-instance-attributes
         result = min(intersection, key=self._connection_types.index)
         return result
 
-    async def _negotiate_transport(self):
+    async def _negotiate_transport(self) -> Transport:
         """Negotiate the transport type to use with the server and create the
         transport object
 
         :return: Transport object
-        :rtype: Transport
         :raise ClientError: If none of the connection types offered by the \
         server are supported
         """
@@ -234,7 +239,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
             await transport.close()
             raise
 
-    async def open(self):
+    async def open(self) -> None:
         """Establish a connection with the CometD server
 
         This method works mostly the same way as the `handshake` method of
@@ -258,10 +263,12 @@ class Client:  # pylint: disable=too-many-instance-attributes
         response = await self._transport.connect()
         self._verify_response(response)
         self._closed = False
+
+        assert self.connection_type is not None
         LOGGER.info("Client opened with connection_type %r",
                     self.connection_type.value)
 
-    async def close(self):
+    async def close(self) -> None:
         """Disconnect from the CometD server"""
         if not self.closed:
             if self.pending_count == 0:
@@ -278,10 +285,10 @@ class Client:  # pylint: disable=too-many-instance-attributes
                 self._closed = True
                 LOGGER.info("Client closed.")
 
-    async def subscribe(self, channel):
+    async def subscribe(self, channel: str) -> None:
         """Subscribe to *channel*
 
-        :param str channel: Name of the channel
+        :param channel: Name of the channel
         :raise ClientInvalidOperation: If the client is :obj:`closed`
         :raise TransportError: If a network or transport related error occurs
         :raise ServerError: If the subscribe request gets rejected by the \
@@ -292,14 +299,15 @@ class Client:  # pylint: disable=too-many-instance-attributes
                                          "the client is closed.")
         await self._check_server_disconnected()
 
+        assert self._transport is not None
         response = await self._transport.subscribe(channel)
         self._verify_response(response)
         LOGGER.info("Subscribed to channel %s", channel)
 
-    async def unsubscribe(self, channel):
+    async def unsubscribe(self, channel: str) -> None:
         """Unsubscribe from *channel*
 
-        :param str channel: Name of the channel
+        :param channel: Name of the channel
         :raise ClientInvalidOperation: If the client is :obj:`closed`
         :raise TransportError: If a network or transport related error occurs
         :raise ServerError: If the unsubscribe request gets rejected by the \
@@ -310,17 +318,17 @@ class Client:  # pylint: disable=too-many-instance-attributes
                                          "while, the client is closed.")
         await self._check_server_disconnected()
 
+        assert self._transport is not None
         response = await self._transport.unsubscribe(channel)
         self._verify_response(response)
         LOGGER.info("Unsubscribed from channel %s", channel)
 
-    async def publish(self, channel, data):
+    async def publish(self, channel: str, data: JsonObject) -> JsonObject:
         """Publish *data* to the given *channel*
 
-        :param str channel: Name of the channel
-        :param dict data: Data to send to the server
+        :param channel: Name of the channel
+        :param data: Data to send to the server
         :return: Publish response
-        :rtype: dict
         :raise ClientInvalidOperation: If the client is :obj:`closed`
         :raise TransportError: If a network or transport related error occurs
         :raise ServerError: If the publish request gets rejected by the server
@@ -330,28 +338,29 @@ class Client:  # pylint: disable=too-many-instance-attributes
                                          "the client is closed.")
         await self._check_server_disconnected()
 
+        assert self._transport is not None
         response = await self._transport.publish(channel, data)
         self._verify_response(response)
         return response
 
-    def _verify_response(self, response):
+    def _verify_response(self, response: JsonObject) -> None:
         """Check the ``successful`` status of the *response* and raise \
         the appropriate :obj:`~aiocometd.exceptions.ServerError` if it's False
 
         If the *response* has no ``successful`` field, it's considered to be
         successful.
 
-        :param dict response: Response message
+        :param response: Response message
         :raise ServerError: If the *response* is not ``successful``
         """
         if is_server_error_message(response):
             self._raise_server_error(response)
 
-    def _raise_server_error(self, response):
+    def _raise_server_error(self, response: JsonObject) -> None:
         """Raise the appropriate :obj:`~aiocometd.exceptions.ServerError` for \
         the failed *response*
 
-        :param dict response: Response message
+        :param response: Response message
         :raise ServerError: If the *response* is not ``successful``
         """
         channel = response["channel"]
@@ -363,11 +372,10 @@ class Client:  # pylint: disable=too-many-instance-attributes
                 message = "Publish request failed."
         raise ServerError(message, response)
 
-    async def receive(self):
+    async def receive(self) -> JsonObject:
         """Wait for incoming messages from the server
 
         :return: Incoming message
-        :rtype: dict
         :raise ClientInvalidOperation: If the client is closed, and has no \
         more pending incoming messages
         :raise ServerError: If the client receives a confirmation message \
@@ -379,11 +387,11 @@ class Client:  # pylint: disable=too-many-instance-attributes
             response = await self._get_message(self.connection_timeout)
             self._verify_response(response)
             return response
-        else:
-            raise ClientInvalidOperation("The client is closed and there are "
-                                         "no pending messages.")
 
-    async def __aiter__(self):
+        raise ClientInvalidOperation("The client is closed and there are "
+                                     "no pending messages.")
+
+    async def __aiter__(self) -> AsyncIterator[JsonObject]:
         """Asynchronous iterator
 
         :raise ServerError: If the client receives a confirmation message \
@@ -397,7 +405,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
             except ClientInvalidOperation:
                 break
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "Client":
         """Enter the runtime context and call :obj:`open`
 
         :raise ClientInvalidOperation:  If the client is already open, or in \
@@ -415,23 +423,25 @@ class Client:  # pylint: disable=too-many-instance-attributes
             raise
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Type[BaseException],
+                        exc_val: BaseException,
+                        exc_tb: TracebackType) -> None:
         """Exit the runtime context and call :obj:`open`"""
         await self.close()
 
-    async def _get_message(self, connection_timeout):
+    async def _get_message(self, connection_timeout: Union[int, float]) \
+            -> JsonObject:
         """Get the next incoming message
 
         :param connection_timeout: The maximum amount of time to wait for the \
         transport to re-establish a connection with the server when the \
         connection fails.
         :return: Incoming message
-        :rtype: dict
         :raise TransportTimeoutError: If the transport can't re-establish \
         connection with the server in :obj:`connection_timeout` time.
         :raise ServerError: If the connection gets closed by the server.
         """
-        tasks = []
+        tasks: List[asyncio.Future[Any]] = []
         # task waiting on connection timeout
         if connection_timeout:
             timeout_task = asyncio.ensure_future(
@@ -440,11 +450,13 @@ class Client:  # pylint: disable=too-many-instance-attributes
             )
             tasks.append(timeout_task)
 
+        assert self._incoming_queue is not None
         # task waiting on incoming messages
         get_task = asyncio.ensure_future(self._incoming_queue.get(),
                                          loop=self._loop)
         tasks.append(get_task)
 
+        assert self._transport is not None
         # task waiting on server side disconnect
         server_disconnected_task = asyncio.ensure_future(
             self._transport.wait_for_state(
@@ -466,8 +478,11 @@ class Client:  # pylint: disable=too-many-instance-attributes
             # handle the completed task
             if get_task in done:
                 return get_task.result()
-            elif server_disconnected_task in done:
-                await self._check_server_disconnected()
+
+            if server_disconnected_task in done:
+                await self.close()
+                raise ServerError("Connection closed by the server",
+                                  self._transport.last_connect_result)
             else:
                 raise TransportTimeoutError("Lost connection with the "
                                             "server.")
@@ -477,7 +492,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
                 task.cancel()
             raise
 
-    async def _wait_connection_timeout(self, timeout):
+    async def _wait_connection_timeout(self, timeout: Union[int, float]) \
+            -> None:
         """Wait for and return when the transport can't re-establish \
         connection with the server in *timeout* time
 
@@ -485,6 +501,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         transport to re-establish a connection with the server when the \
         connection fails.
         """
+        assert self._transport is not None
         while True:
             await self._transport.wait_for_state(TransportState.CONNECTING)
             try:
@@ -495,7 +512,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
             except asyncio.TimeoutError:
                 break
 
-    async def _check_server_disconnected(self):
+    async def _check_server_disconnected(self) -> None:
         """Checks whether the current transport'state is
         :obj:`TransportState.SERVER_DISCONNECTED` and if it is then closes the
         client and raises an error

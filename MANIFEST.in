@@ -2,8 +2,11 @@ include LICENSE.txt
 include DESCRIPTION.rst
 include README.rst
 include .pylintrc
+include aiocometd/py.typed
 graft tests
 graft docs
 graft examples
 global-exclude *.pyc
+global-exclude .python-version
 prune docs/build
+prune venv*

@@ -1,19 +1,21 @@
 """Client for the CometD Chat Example"""
 import asyncio
 import argparse
+from typing import Dict, Any
 
-from aioconsole import ainput
+from aioconsole import ainput  # type: ignore
 
 from aiocometd import Client, ConnectionType
 from aiocometd.exceptions import AiocometdException
 
 
-async def chat_client(url, nickname, connection_type):
+async def chat_client(url: str, nickname: str,
+                      connection_type: ConnectionType) -> None:
     """Runs the chat client until it's canceled
 
-    :param str url: CometD server URL
-    :param str nickname: The user's nickname
-    :param aiocometd.ConnectionType connection_type: Connection type
+    :param url: CometD server URL
+    :param nickname: The user's nickname
+    :param connection_type: Connection type
     """
     try:
         room_name = "demo"
@@ -81,12 +83,13 @@ async def chat_client(url, nickname, connection_type):
         print("\nExiting...")
 
 
-async def input_publisher(client, nickname, room_channel):
+async def input_publisher(client: Client, nickname: str,
+                          room_channel: str) -> None:
     """Read text from stdin and publish it on the *room_channel*
 
-    :param aiocometd.Client client: A client object
-    :param str nickname: The user's nickname
-    :param str room_channel: The chat room's channel
+    :param client: A client object
+    :param nickname: The user's nickname
+    :param room_channel: The chat room's channel
     """
     up_one_line = "\033[F"
     clear_line = "\033[K"
@@ -109,11 +112,8 @@ async def input_publisher(client, nickname, room_channel):
         })
 
 
-def get_arguments():
-    """Returns the argument's parsed from the command line
-
-    :rtype: dict
-    """
+def get_arguments() -> Dict[str, Any]:
+    """Returns the argument's parsed from the command line"""
     parser = argparse.ArgumentParser(description="CometD chat example client")
     parser.add_argument("url", metavar="server_url", type=str,
                         help="CometD server URL")
@@ -126,7 +126,7 @@ def get_arguments():
     return vars(parser.parse_args())
 
 
-def main():
+def main() -> None:
     """Starts the chat client application"""
     arguments = get_arguments()
 

@@ -2,16 +2,26 @@
 import asyncio
 import logging
 from contextlib import suppress
+from typing import Callable, Optional, AsyncContextManager, Any, Awaitable, \
+    cast
 
 import aiohttp
+import aiohttp.client_ws
 
-from ..constants import ConnectionType, MetaChannel
-from .registry import register_transport
-from .base import TransportBase
-from ..exceptions import TransportError, TransportConnectionClosed
+from aiocometd.constants import ConnectionType, MetaChannel
+from aiocometd.exceptions import TransportError, TransportConnectionClosed
+from aiocometd.typing import JsonObject
+from aiocometd.transports.registry import register_transport
+from aiocometd.transports.base import TransportBase, Payload, Headers
 
 
 LOGGER = logging.getLogger(__name__)
+#: Asynchronous factory function of ClientSessions
+AsyncSessionFactory = Callable[[], Awaitable[aiohttp.ClientSession]]
+#: Web socket type
+WebSocket = aiohttp.client_ws.ClientWebSocketResponse
+#: Context manager type managing a WebSocket
+WebSocketContextManager = AsyncContextManager[WebSocket]
 
 
 class WebSocketFactory:  # pylint: disable=too-few-public-methods
@@ -20,30 +30,27 @@ class WebSocketFactory:  # pylint: disable=too-few-public-methods
 
     This class allows the usage of factory objects without context blocks
     """
-    def __init__(self, session_factory):
+    def __init__(self, session_factory: AsyncSessionFactory):
         """
-        :param asyncio.coroutine session_factory: Coroutine factory function \
+        :param session_factory: Coroutine factory function \
         which returns an HTTP session
         """
         self._session_factory = session_factory
-        self._context = None
-        self._socket = None
+        self._context: Optional[WebSocketContextManager] = None
+        self._socket: Optional[WebSocket] = None
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the factory"""
         with suppress(Exception):
             await self._exit()
 
-    async def __call__(self, *args, **kwargs):
+    async def __call__(self, *args: Any, **kwargs: Any) -> WebSocket:
         """Create a new factory object or returns a previously created one
         if it's not closed
 
         :param args: positional arguments for the ws_connect function
         :param kwargs: keyword arguments for the ws_connect function
         :return: Websocket object
-        :rtype: `aiohttp.ClientWebSocketResponse \
-        <https://aiohttp.readthedocs.io/en/stable\
-        /client_reference.html#aiohttp.ClientWebSocketResponse>`_
         """
         # if a the factory object already exists and if it's in closed state
         # exit the context manager and clear the references
@@ -53,21 +60,22 @@ class WebSocketFactory:  # pylint: disable=too-few-public-methods
         # if there is no factory object, then create it and enter the \
         # context manager to initialize it
         if self._socket is None:
-            await self._enter(*args, **kwargs)
+            self._socket = await self._enter(*args, **kwargs)
 
         return self._socket
 
-    async def _enter(self, *args, **kwargs):
+    async def _enter(self, *args: Any, **kwargs: Any) -> WebSocket:
         """Enter factory context
 
         :param args: positional arguments for the ws_connect function
         :param kwargs: keyword arguments for the ws_connect function
+        :return: Websocket object
         """
         session = await self._session_factory()
         self._context = session.ws_connect(*args, **kwargs)
-        self._socket = await self._context.__aenter__()
+        return await self._context.__aenter__()
 
-    async def _exit(self):
+    async def _exit(self) -> None:
         """Exit factory context"""
         if self._context:
             await self._context.__aexit__(None, None, None)
@@ -78,8 +86,8 @@ class WebSocketFactory:  # pylint: disable=too-few-public-methods
 class WebSocketTransport(TransportBase):
     """WebSocket type transport"""
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)
         #: channels used during the connect task, requests on these channels
         #: are usually long running
         self._long_duration_channels = (MetaChannel.HANDSHAKE,
@@ -95,19 +103,17 @@ class WebSocketTransport(TransportBase):
         #: exclusive lock for the objects created by _socket_factory_long
         self._socket_lock_long = asyncio.Lock()
 
-    async def _get_socket(self, channel, headers):
+    async def _get_socket(self, channel: str, headers: Headers) \
+            -> WebSocket:
         """Get a websocket object for the given *channel*
 
         Returns different websocket objects for long running and short duration
         requests, so while a long running request is pending, short duration
         requests can be transmitted.
 
-        :param str channel: CometD channel name
-        :param dict headers: Headers to send
+        :param channel: CometD channel name
+        :param headers: Headers to send
         :return: Websocket object
-        :rtype: `aiohttp.ClientWebSocketResponse \
-        <https://aiohttp.readthedocs.io/en/stable\
-        /client_reference.html#aiohttp.ClientWebSocketResponse>`_
         """
         if channel in self._long_duration_channels:
             factory = self._socket_factory_long
@@ -117,25 +123,25 @@ class WebSocketTransport(TransportBase):
         return await factory(self.endpoint, ssl=self.ssl, headers=headers,
                              receive_timeout=self.request_timeout)
 
-    def _get_socket_lock(self, channel):
+    def _get_socket_lock(self, channel: str) -> asyncio.Lock:
         """Get an exclusive lock object for the given *channel*
 
-        :param str channel: CometD channel name
+        :param channel: CometD channel name
         :return: lock object for the *channel*
-        :rtype: asyncio.Lock
         """
         if channel in self._long_duration_channels:
             return self._socket_lock_long
         return self._socket_lock_short
 
-    async def _reset_sockets(self):
+    async def _reset_sockets(self) -> None:
         """Close all socket factories and recreate them"""
         await self._socket_factory_short.close()
         self._socket_factory_short = WebSocketFactory(self._get_http_session)
         await self._socket_factory_long.close()
         self._socket_factory_long = WebSocketFactory(self._get_http_session)
 
-    async def _send_final_payload(self, payload, *, headers):
+    async def _send_final_payload(self, payload: Payload, *,
+                                  headers: Headers) -> JsonObject:
         try:
             # the channel of the first message
             channel = payload[0]["channel"]
@@ -164,16 +170,13 @@ class WebSocketTransport(TransportBase):
             LOGGER.warning("Failed to send payload, %s", error)
             raise TransportError(str(error)) from error
 
-    async def _send_socket_payload(self, socket, payload):
+    async def _send_socket_payload(self, socket: WebSocket,
+                                   payload: Payload) -> JsonObject:
         """Send *payload* to the server on the given *socket*
 
         :param socket: WebSocket object
-        :type socket: `aiohttp.ClientWebSocketResponse \
-        <https://aiohttp.readthedocs.io/en/stable\
-        /client_reference.html#aiohttp.ClientWebSocketResponse>`_
-        :param list[dict] payload: A message or a list of messages
+        :param payload: A message or a list of messages
         :return: Response payload
-        :rtype: list[dict]
         :raises TransportError: When the request fails.
         :raises TransportConnectionClosed: When the *socket* receives a CLOSE \
         message instead of the expected response
@@ -186,7 +189,8 @@ class WebSocketTransport(TransportBase):
             if response.type == aiohttp.WSMsgType.CLOSE:
                 raise TransportConnectionClosed("Received CLOSE message on "
                                                 "the factory.")
-            response_payload = response.json(loads=self._json_loads)
+            response_payload = cast(Payload,
+                                    response.json(loads=self._json_loads))
             matching_response = await self._consume_payload(
                 response_payload,
                 headers=None,
@@ -194,7 +198,7 @@ class WebSocketTransport(TransportBase):
             if matching_response:
                 return matching_response
 
-    async def close(self):
+    async def close(self) -> None:
         await self._socket_factory_short.close()
         await self._socket_factory_long.close()
         await super().close()

@@ -653,6 +653,10 @@ class TestTransportBase(TestCase):
             [CONNECT_MESSAGE] + additional_messages)
         self.assertTrue(self.transport._subscribe_on_connect)
 
+    def test__state_initially_disconnected(self):
+        self.assertIs(self.transport._state,
+                      TransportState.DISCONNECTED)
+
     def test_state(self):
         self.assertIs(self.transport.state,
                       self.transport._state)
@@ -775,7 +779,7 @@ class TestTransportBase(TestCase):
         task.set_result("result")
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTING
-        self.transport.reconnect_advice = {
+        self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
         }
@@ -797,7 +801,7 @@ class TestTransportBase(TestCase):
         task.set_exception(error)
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTED
-        self.transport.reconnect_advice = {
+        self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
         }
@@ -819,7 +823,7 @@ class TestTransportBase(TestCase):
         task.set_exception(error)
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.DISCONNECTING
-        self.transport.reconnect_advice = {
+        self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
         }
@@ -836,7 +840,7 @@ class TestTransportBase(TestCase):
 
     @mock.patch("aiocometd.transports.base.defer")
     def test_follow_advice_handshake(self, defer):
-        self.transport.reconnect_advice = {
+        self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "handshake"
         }
@@ -858,7 +862,7 @@ class TestTransportBase(TestCase):
 
     @mock.patch("aiocometd.transports.base.defer")
     def test_follow_advice_retry(self, defer):
-        self.transport.reconnect_advice = {
+        self.transport._reconnect_advice = {
             "interval": 1,
             "reconnect": "retry"
         }
@@ -883,7 +887,7 @@ class TestTransportBase(TestCase):
         advices = ["none", "", None]
         for advice in advices:
             self.transport._state = TransportState.CONNECTED
-            self.transport.reconnect_advice = {
+            self.transport._reconnect_advice = {
                 "interval": 1,
                 "reconnect": advice
             }
@@ -1194,15 +1198,6 @@ class TestTransportBase(TestCase):
         self.assertFalse(self.transport._state_events[old_state].is_set())
         self.assertTrue(self.transport._state_events[new_state].is_set())
 
-    def test_set_state_event_no_old_state(self):
-        old_state = None
-        new_state = TransportState.CONNECTED
-        self.transport._state_events[new_state].clear()
-
-        self.transport._set_state_event(old_state, new_state)
-
-        self.assertTrue(self.transport._state_events[new_state].is_set())
-
     def test_set_state_event_unchanged_state(self):
         state = TransportState.CONNECTED
         event_mock = mock.MagicMock()
@@ -1229,8 +1224,8 @@ class TestTransportBase(TestCase):
 
         self.assertIsNone(result)
 
-    def test_request_timeout(self):
-        self.transport.reconnect_advice = {
+    def test_request_timeout_int(self):
+        self.transport._reconnect_advice = {
             "timeout": 2000
         }
 
@@ -1238,7 +1233,23 @@ class TestTransportBase(TestCase):
                          (self.transport.reconnect_advice["timeout"] / 1000) *
                          type(self.transport).REQUEST_TIMEOUT_INCREASE_FACTOR)
 
+    def test_request_timeout_float(self):
+        self.transport._reconnect_advice = {
+            "timeout": 2000.0
+        }
+
+        self.assertEqual(self.transport.request_timeout,
+                         (self.transport.reconnect_advice["timeout"] / 1000) *
+                         type(self.transport).REQUEST_TIMEOUT_INCREASE_FACTOR)
+
     def test_request_timeout_none(self):
-        self.transport.reconnect_advice = {}
+        self.transport._reconnect_advice = {}
+
+        self.assertIsNone(self.transport.request_timeout)
+
+    def test_request_timeout_none_on_unsupported_timeout_type(self):
+        self.transport._reconnect_advice = {
+            "timeout": "2000"
+        }
 
         self.assertIsNone(self.transport.request_timeout)
