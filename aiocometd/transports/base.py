@@ -385,6 +385,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
                     not in self._subscriptions):
                 self._subscriptions.add(response_message["subscription"])
             elif (not response_message["successful"] and
+                  "subscription" in response_message and
                   response_message["subscription"] in self._subscriptions):
                 self._subscriptions.remove(response_message["subscription"])
 

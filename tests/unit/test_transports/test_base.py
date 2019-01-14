@@ -265,6 +265,19 @@ class TestTransportBase(TestCase):
 
         self.assertEqual(self.transport.subscriptions, set())
 
+    def test_update_subscriptions_new_subscription_fail_with_error(self):
+        response_message = {
+            "channel": MetaChannel.SUBSCRIBE,
+            "error": "403::subscription_invalid",
+            "successful": False,
+            "id": "3"
+        }
+        self.transport._subscriptions = set()
+
+        self.transport._update_subscriptions(response_message)
+
+        self.assertEqual(self.transport.subscriptions, set())
+
     def test_update_subscriptions_existing_subscription_fail(self):
         response_message = {
             "channel": MetaChannel.SUBSCRIBE,
