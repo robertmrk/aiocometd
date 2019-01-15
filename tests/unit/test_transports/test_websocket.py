@@ -244,6 +244,25 @@ class TestWebSocketTransport(TestCase):
                                             dumps=self.transport._json_dumps)
         self.transport._consume_payload.assert_not_called()
 
+    async def test_send_socket_payload_invalid_response(self):
+        payload = [object()]
+        socket = mock.MagicMock()
+        socket.send_json = mock.CoroutineMock()
+        response = mock.MagicMock()
+        response.json = mock.MagicMock(side_effect=TypeError())
+        socket.receive = mock.CoroutineMock(return_value=response)
+        self.transport._consume_payload = mock.CoroutineMock()
+
+        with self.assertRaisesRegex(TransportError,
+                                    "Received invalid response from the "
+                                    "server."):
+            await self.transport._send_socket_payload(socket, payload)
+
+        socket.send_json.assert_called_with(payload,
+                                            dumps=self.transport._json_dumps)
+        response.json.assert_called_with(loads=self.transport._json_loads)
+        self.transport._consume_payload.assert_not_called()
+
     async def test_send_final_payload(self):
         channel = "channel"
         payload = [dict(channel=channel)]

@@ -189,8 +189,13 @@ class WebSocketTransport(TransportBase):
             if response.type == aiohttp.WSMsgType.CLOSE:
                 raise TransportConnectionClosed("Received CLOSE message on "
                                                 "the factory.")
-            response_payload = cast(Payload,
-                                    response.json(loads=self._json_loads))
+            try:
+                response_payload = cast(Payload,
+                                        response.json(loads=self._json_loads))
+            except TypeError:
+                raise TransportError("Received invalid response from the "
+                                     "server.")
+
             matching_response = await self._consume_payload(
                 response_payload,
                 headers=None,

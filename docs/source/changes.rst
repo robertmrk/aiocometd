@@ -1,6 +1,12 @@
 Changelog
 =========
 
+0.4.2 (2019-01-15)
+------------------
+
+- Fix the handling of invalid websocket transport responses
+- Fix the handling of failed subscription responses
+
 0.4.1 (2019-01-04)
 ------------------
 
