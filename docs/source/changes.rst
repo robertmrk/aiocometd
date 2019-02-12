@@ -1,6 +1,11 @@
 Changelog
 =========
 
+0.4.3 (2019-02-12)
+------------------
+
+- Fix reconnection issue on Salesforce Streaming API
+
 0.4.2 (2019-01-15)
 ------------------
 
