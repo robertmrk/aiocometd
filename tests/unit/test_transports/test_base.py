@@ -788,25 +788,45 @@ class TestTransportBase(TestCase):
         self.assertEqual(self.transport.state, TransportState.CONNECTING)
 
     async def test_connect_done_with_result(self):
-        task = self.loop.create_future()
-        task.set_result("result")
-        self.transport._follow_advice = mock.MagicMock()
-        self.transport._state = TransportState.CONNECTING
-        self.transport._reconnect_advice = {
-            "interval": 1,
-            "reconnect": "retry"
-        }
-        self.transport._reconnect_timeout = 2
+        cases = (
+            ("successful",
+             {"successful": True},
+             "retry"),
+            ("unsuccessful without advice",
+             {"succesful": False},
+             "retry"),
+            ("unsuccessful with advice and missing reconnect",
+             {"succesful": False, "advice": {}},
+             "retry"),
+            ("unsuccessful with advice and reconnect",
+             {"succesful": False, "advice": {"reconnect": "none"}},
+             "retry")
+        )
+        for name, result, expected_advice in cases:
+            with self.subTest(msg=name):
+                task = self.loop.create_future()
+                task.set_result(result)
+                self.transport._reconnect_advice = {
+                    "interval": 1
+                }
+                self.transport._follow_advice = mock.MagicMock()
+                self.transport._state = TransportState.CONNECTING
+                self.transport._reconnect_timeout = 2
 
-        with self.assertLogs(TransportBase.__module__, "DEBUG") as log:
-            self.transport._connect_done(task)
+                with self.assertLogs(TransportBase.__module__, "DEBUG") as log:
+                    self.transport._connect_done(task)
 
-        log_message = "Connect task finished with: {!r}".format("result")
-        self.assertEqual(
-            log.output,
-            ["DEBUG:{}:{}".format(TransportBase.__module__, log_message)])
-        self.transport._follow_advice.assert_called_with(1)
-        self.assertEqual(self.transport.state, TransportState.CONNECTED)
+                log_message = "Connect task finished with: {!r}".format(result)
+                self.assertEqual(
+                    log.output,
+                    ["DEBUG:{}:{}".format(TransportBase.__module__,
+                                          log_message)])
+                self.transport._follow_advice.assert_called_with(
+                    expected_advice,
+                    1
+                )
+                self.assertEqual(self.transport.state,
+                                 TransportState.CONNECTED)
 
     async def test_connect_done_with_error(self):
         error = RuntimeError("error")
@@ -814,10 +834,6 @@ class TestTransportBase(TestCase):
         task.set_exception(error)
         self.transport._follow_advice = mock.MagicMock()
         self.transport._state = TransportState.CONNECTED
-        self.transport._reconnect_advice = {
-            "interval": 1,
-            "reconnect": "retry"
-        }
         self.transport._reconnect_timeout = 2
 
         with self.assertLogs(TransportBase.__module__, "DEBUG") as log:
@@ -827,7 +843,7 @@ class TestTransportBase(TestCase):
         self.assertEqual(
             log.output,
             ["DEBUG:{}:{}".format(TransportBase.__module__, log_message)])
-        self.transport._follow_advice.assert_called_with(2)
+        self.transport._follow_advice.assert_called_with("retry", 2)
         self.assertEqual(self.transport.state, TransportState.CONNECTING)
 
     async def test_connect_dont_follow_advice_on_disconnecting(self):
@@ -853,16 +869,12 @@ class TestTransportBase(TestCase):
 
     @mock.patch("aiocometd.transports.base.defer")
     def test_follow_advice_handshake(self, defer):
-        self.transport._reconnect_advice = {
-            "interval": 1,
-            "reconnect": "handshake"
-        }
         self.transport.handshake = mock.MagicMock(return_value=object())
         self.transport._connect = mock.MagicMock(return_value=object())
         self.transport._start_connect_task = mock.MagicMock()
         defer.return_value = mock.MagicMock(return_value=object())
 
-        self.transport._follow_advice(5)
+        self.transport._follow_advice("handshake", 5)
 
         defer.assert_called_with(self.transport.handshake,
                                  delay=5,
@@ -875,16 +887,12 @@ class TestTransportBase(TestCase):
 
     @mock.patch("aiocometd.transports.base.defer")
     def test_follow_advice_retry(self, defer):
-        self.transport._reconnect_advice = {
-            "interval": 1,
-            "reconnect": "retry"
-        }
         self.transport.handshake = mock.MagicMock(return_value=object())
         self.transport._connect = mock.MagicMock(return_value=object())
         self.transport._start_connect_task = mock.MagicMock()
         defer.return_value = mock.MagicMock(return_value=object())
 
-        self.transport._follow_advice(5)
+        self.transport._follow_advice("retry", 5)
 
         defer.assert_called_with(self.transport._connect,
                                  delay=5,
@@ -897,31 +905,34 @@ class TestTransportBase(TestCase):
 
     @mock.patch("aiocometd.transports.base.defer")
     def test_follow_advice_none(self, defer):
-        advices = ["none", "", None]
-        for advice in advices:
-            self.transport._state = TransportState.CONNECTED
-            self.transport._reconnect_advice = {
-                "interval": 1,
-                "reconnect": advice
-            }
-            self.transport.handshake = mock.MagicMock(return_value=object())
-            self.transport._connect = mock.MagicMock(return_value=object())
-            self.transport._start_connect_task = mock.MagicMock()
-            defer.return_value = mock.MagicMock()
+        cases = (
+            ("none string", "none"),
+            ("emtpy string", ""),
+            ("None value", None)
+        )
+        for name, advice in cases:
+            with self.subTest(msg=name):
+                self.transport._state = TransportState.CONNECTED
+                self.transport.handshake = \
+                    mock.MagicMock(return_value=object())
+                self.transport._connect = mock.MagicMock(return_value=object())
+                self.transport._start_connect_task = mock.MagicMock()
+                defer.return_value = mock.MagicMock()
 
-            with self.assertLogs(TransportBase.__module__, "DEBUG") as log:
-                self.transport._follow_advice(5)
+                with self.assertLogs(TransportBase.__module__, "DEBUG") as log:
+                    self.transport._follow_advice(advice, 5)
 
-            self.assertEqual(log.output,
-                             ["WARNING:{}:No reconnect "
-                              "advice provided, no more operations will be "
-                              "scheduled.".format(TransportBase.__module__)])
-            defer.assert_not_called()
-            self.transport.handshake.assert_not_called()
-            self.transport._connect.assert_not_called()
-            self.transport._start_connect_task.assert_not_called()
-            self.assertEqual(self.transport.state,
-                             TransportState.SERVER_DISCONNECTED)
+                self.assertEqual(log.output,
+                                 ["WARNING:{}:No reconnect "
+                                  "advice provided, no more operations will"
+                                  " be scheduled."
+                                  .format(TransportBase.__module__)])
+                defer.assert_not_called()
+                self.transport.handshake.assert_not_called()
+                self.transport._connect.assert_not_called()
+                self.transport._start_connect_task.assert_not_called()
+                self.assertEqual(self.transport.state,
+                                 TransportState.SERVER_DISCONNECTED)
 
     def test_client_id(self):
         self.assertIs(self.transport.client_id,

@@ -79,6 +79,10 @@ Usage
         loop = asyncio.get_event_loop()
         loop.run_until_complete(chat())
 
+For more detailed usage examples take a look at the
+`command line chat example <cli_example_>`_ or for a more complex example with
+a GUI check out the aiocometd-chat-demo_.
+
 Documentation
 -------------
 
@@ -90,3 +94,5 @@ https://aiocometd.readthedocs.io/
 .. _asyncio: https://docs.python.org/3/library/asyncio.html
 .. _Bayeux: https://docs.cometd.org/current/reference/#_bayeux
 .. _ext: https://docs.cometd.org/current/reference/#_bayeux_ext
+.. _cli_example: https://github.com/robertmrk/aiocometd/blob/develop/examples/chat.py
+.. _aiocometd-chat-demo: https://github.com/robertmrk/aiocometd-chat-demo
