@@ -519,9 +519,21 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         :param future: A :obj:`_connect` or :obj:`handshake` \
         future
         """
+        # set the default reconnect advice value
+        reconnect_advice = "retry"
+        # use the last known connection timeout
+        reconnect_timeout = self.reconnect_advice.get("interval")
         try:
+            # get the task's result
             result: Union[JsonObject, Exception] = future.result()
-            reconnect_timeout = self.reconnect_advice["interval"]
+            # on a failed connect or handshake operation use the reconnect
+            # advice returned by the server if it's present int the response
+            # message
+            if (isinstance(result, dict) and
+                    not result.get("successful", True) and
+                    "advice" in result and
+                    "reconnect" in result["advice"]):
+                reconnect_advice = result["advice"]["reconnect"]
             self._state = TransportState.CONNECTED
         except Exception as error:  # pylint: disable=broad-except
             result = error
@@ -532,30 +544,30 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         LOGGER.debug("Connect task finished with: %r", result)
 
         if self.state != TransportState.DISCONNECTING:
-            self._follow_advice(reconnect_timeout)
+            self._follow_advice(reconnect_advice, reconnect_timeout)
 
-    def _follow_advice(self, reconnect_timeout: Union[int, float, None]) \
-            -> None:
+    def _follow_advice(self, reconnect_advice: str,
+                       reconnect_timeout: Union[int, float, None]) -> None:
         """Follow the server's reconnect advice
 
         Either a :obj:`_connect` or :obj:`handshake` operation is started
-        based on the advice or the method returns without starting any
-        operation if no advice is provided.
+        based on the *reconnect_advice* or the method returns without starting
+        any operation if a different advice is specified.
 
+        :param reconnect_advice: Reconnect advice parameter that determines \
+        which operation should be started.
         :param reconnect_timeout: Initial connection delay to pass to \
         :obj:`_connect` or :obj:`handshake`.
         """
-        advice = self.reconnect_advice.get("reconnect")
-
         # do a handshake operation if advised
-        if advice == "handshake":
+        if reconnect_advice == "handshake":
             handshake_coro = defer(self.handshake,
                                    delay=reconnect_timeout,
                                    loop=self._loop)
             self._start_connect_task(handshake_coro([self.connection_type]))
 
         # do a connect operation if advised
-        elif advice == "retry":
+        elif reconnect_advice == "retry":
             connect_coro = defer(self._connect,
                                  delay=reconnect_timeout,
                                  loop=self._loop)
