@@ -4,7 +4,7 @@ from asynctest import TestCase, mock
 from aiohttp import client_exceptions, WSMsgType
 
 from aiocometd.transports.websocket import WebSocketTransport, WebSocketFactory
-from aiocometd.constants import ConnectionType, MetaChannel
+from aiocometd.constants import ConnectionType
 from aiocometd.exceptions import TransportConnectionClosed, TransportError
 
 
@@ -369,7 +369,7 @@ class TestWebSocketTransport(TestCase):
     @mock.patch("aiocometd.transports.websocket.WebSocketFactory")
     async def test_reset_socket(self, ws_factory_cls):
         socket_factory = object()
-        ws_factory_cls.return_value =  socket_factory
+        ws_factory_cls.return_value = socket_factory
         old_factory = mock.MagicMock()
         old_factory.close = mock.CoroutineMock()
         self.transport._socket_factory = old_factory
@@ -503,7 +503,6 @@ class TestWebSocketTransport(TestCase):
 
     async def test_receive_parse_type_error(self):
         response = mock.MagicMock()
-        response_payload = object()
         response.json.side_effect = TypeError()
         socket = mock.MagicMock()
         socket.receive = mock.CoroutineMock(
