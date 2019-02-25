@@ -3,12 +3,12 @@ import asyncio
 import logging
 from contextlib import suppress
 from typing import Callable, Optional, AsyncContextManager, Any, Awaitable, \
-    cast
+    cast, Dict
 
 import aiohttp
 import aiohttp.client_ws
 
-from aiocometd.constants import ConnectionType, MetaChannel
+from aiocometd.constants import ConnectionType
 from aiocometd.exceptions import TransportError, TransportConnectionClosed
 from aiocometd.typing import JsonObject
 from aiocometd.transports.registry import register_transport
@@ -88,84 +88,98 @@ class WebSocketTransport(TransportBase):
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
-        #: channels used during the connect task, requests on these channels
-        #: are usually long running
-        self._long_duration_channels = (MetaChannel.HANDSHAKE,
-                                        MetaChannel.CONNECT)
+        #: factory for creating websockets
+        self._socket_factory = WebSocketFactory(self._get_http_session)
+        #: pending message exchanges between the client and server,
+        #: the request message's id is used as a key
+        self._pending_exhanges: Dict[int, "asyncio.Future[JsonObject]"] \
+            = dict()
+        #: task for receiving incoming messages
+        self._receive_task: Optional["asyncio.Task[None]"] = None
 
-        #: factory creating sockets for short duration requests
-        self._socket_factory_short = WebSocketFactory(self._get_http_session)
-        #: factory creating sockets for long duration requests
-        self._socket_factory_long = WebSocketFactory(self._get_http_session)
+    async def _reset_socket(self) -> None:
+        """Close the socket factory and recreate it"""
+        await self._socket_factory.close()
+        self._socket_factory = WebSocketFactory(self._get_http_session)
 
-        #: exclusive lock for the objects created by _socket_factory_short
-        self._socket_lock_short = asyncio.Lock()
-        #: exclusive lock for the objects created by _socket_factory_long
-        self._socket_lock_long = asyncio.Lock()
+    async def _get_socket(self, headers: Headers) -> WebSocket:
+        """Factory function for creating a websocket object
 
-    async def _get_socket(self, channel: str, headers: Headers) \
-            -> WebSocket:
-        """Get a websocket object for the given *channel*
-
-        Returns different websocket objects for long running and short duration
-        requests, so while a long running request is pending, short duration
-        requests can be transmitted.
-
-        :param channel: CometD channel name
         :param headers: Headers to send
         :return: Websocket object
         """
-        if channel in self._long_duration_channels:
-            factory = self._socket_factory_long
-        else:
-            factory = self._socket_factory_short
+        return await self._socket_factory(
+            self.endpoint,
+            ssl=self.ssl,
+            headers=headers,
+            receive_timeout=self.request_timeout,
+            autoping=True)
 
-        return await factory(self.endpoint, ssl=self.ssl, headers=headers,
-                             receive_timeout=self.request_timeout)
+    def _create_exhange_future(self, payload: Payload) \
+            -> "asyncio.Future[JsonObject]":
+        """Create a future which represents an exchange of messages between
+        the server and client
 
-    def _get_socket_lock(self, channel: str) -> asyncio.Lock:
-        """Get an exclusive lock object for the given *channel*
-
-        :param channel: CometD channel name
-        :return: lock object for the *channel*
+        The created future will be associated with the id of the first message
+        in the payload.
+        :param payload: The payload sent by the client
+        :return: A future which will yield the server's response message to the
+        outgoing *payload*
         """
-        if channel in self._long_duration_channels:
-            return self._socket_lock_long
-        return self._socket_lock_short
+        future: "asyncio.Future[JsonObject]" = asyncio.Future(loop=self._loop)
+        self._pending_exhanges[payload[0]["id"]] = future
+        return future
 
-    async def _reset_sockets(self) -> None:
-        """Close all socket factories and recreate them"""
-        await self._socket_factory_short.close()
-        self._socket_factory_short = WebSocketFactory(self._get_http_session)
-        await self._socket_factory_long.close()
-        self._socket_factory_long = WebSocketFactory(self._get_http_session)
+    def _set_exchange_results(self, response_payload: Payload) -> None:
+        """Set the result of all the pending message exchange futures for which
+        we can find a response in the payload
+
+        :param response_payload: Response payload
+        """
+        # iterate over all incoming messages
+        for response_message in response_payload:
+            # if the incoming message has an id (otherwise it's not a response)
+            if "id" in response_message:
+                message_id = response_message["id"]
+                # if the message id is associated with any pending exchange
+                if message_id in self._pending_exhanges:
+                    # remove the exchange from the pending exchanges
+                    exchange = self._pending_exhanges.pop(message_id)
+                    # if the future is not completed yet then set its result
+                    if not exchange.done():
+                        exchange.set_result(response_message)
+
+    def _set_exchange_errors(self, error: Exception) -> None:
+        """Set the *error* as the exception for all pending exchanges
+
+        :param error: An exception
+        """
+        # set the exception for all the exchanges
+        for exchange in self._pending_exhanges.values():
+            if not exchange.done():
+                exchange.set_exception(error)
+        # clear the pending exchanges
+        self._pending_exhanges.clear()
 
     async def _send_final_payload(self, payload: Payload, *,
                                   headers: Headers) -> JsonObject:
         try:
-            # the channel of the first message
-            channel = payload[0]["channel"]
-            # lock the socket until we're done sending the payload and
-            # receiving the response
-            lock = self._get_socket_lock(channel)
-            async with lock:
-                try:
-                    # try to send the payload on the socket which might have
-                    # been closed since the last time it was used
-                    socket = await self._get_socket(channel, headers)
-                    return await self._send_socket_payload(socket, payload)
-                except asyncio.TimeoutError:
-                    # reset all socket factories since after a timeout error
-                    # most likely all of them are invalid
-                    await self._reset_sockets()
-                    raise
-                except TransportConnectionClosed:
-                    # if the socket was indeed closed, try to reopen the socket
-                    # and send the payload, since the connection could've
-                    # normalised since the last network problem
-                    socket = await self._get_socket(channel, headers)
-                    return await self._send_socket_payload(socket, payload)
-
+            try:
+                # try to send the payload on the socket which might have
+                # been closed since the last time it was used
+                socket = await self._get_socket(headers)
+                return await self._send_socket_payload(socket, payload)
+            except asyncio.TimeoutError:
+                # reset the socket factory since after a timeout error
+                # it becomes invalid
+                await self._reset_socket()
+                raise
+            except TransportConnectionClosed:
+                # if the socket was indeed closed, try to reopen the socket
+                # and send the payload, since the connection could've
+                # normalised since the last network problem
+                socket = await self._get_socket(headers)
+                return await self._send_socket_payload(socket, payload)
         except aiohttp.client_exceptions.ClientError as error:
             LOGGER.warning("Failed to send payload, %s", error)
             raise TransportError(str(error)) from error
@@ -181,29 +195,73 @@ class WebSocketTransport(TransportBase):
         :raises TransportConnectionClosed: When the *socket* receives a CLOSE \
         message instead of the expected response
         """
-        # receive responses from the server and consume them,
-        # until we get back the response for the first message in the *payload*
-        await socket.send_json(payload, dumps=self._json_dumps)
-        while True:
-            response = await socket.receive()
-            if response.type == aiohttp.WSMsgType.CLOSE:
-                raise TransportConnectionClosed("Received CLOSE message on "
-                                                "the factory.")
-            try:
-                response_payload = cast(Payload,
-                                        response.json(loads=self._json_loads))
-            except TypeError:
-                raise TransportError("Received invalid response from the "
-                                     "server.")
+        # create a future for the exchange of messages
+        future = self._create_exhange_future(payload)
+        try:
+            # send the outgoing payload
+            await socket.send_json(payload, dumps=self._json_dumps)
+        except Exception as error:
+            # in case of an exception set the exception for all pending futures
+            for future in self._pending_exhanges.values():
+                future.set_exception(error)
+            # clear the pending exchanges
+            self._pending_exhanges.clear()
+            raise
 
-            matching_response = await self._consume_payload(
-                response_payload,
-                headers=None,
-                find_response_for=payload[0])
-            if matching_response:
-                return matching_response
+        # if the receive task is not running then start it
+        if self._receive_task is None:
+            self._receive_task = self._loop.create_task(self._receive(socket))
+            self._receive_task.add_done_callback(self._receive_done)
+        # await and return the response of the server
+        return await future
+
+    async def _receive(self, socket: WebSocket) -> None:
+        """Consume the incomming messages on the given *socket*
+
+        :param socket: A Websocket object
+        """
+        # receive responses from the server and consume them
+        try:
+            while True:
+                response = await socket.receive()
+                if response.type == aiohttp.WSMsgType.CLOSE:
+                    raise TransportConnectionClosed("Received CLOSE message "
+                                                    "on the factory.")
+                # parse the response payload
+                try:
+                    response_payload \
+                        = cast(Payload, response.json(loads=self._json_loads))
+                except TypeError:
+                    raise TransportError("Received invalid response from the "
+                                         "server.")
+
+                # consume all event messages in the payload
+                await self._consume_payload(response_payload)
+
+                # set results of matching exchanges
+                self._set_exchange_results(response_payload)
+        except Exception as error:
+            # set the error as the result for all pending exchanges
+            self._set_exchange_errors(error)
+            raise
+
+    def _receive_done(self, future: "asyncio.Task[None]") -> None:
+        """Consume the results of the *future*
+
+        :param future: A :obj:`_receive` future
+        """
+        # extract the result of the future
+        try:
+            result = future.result()
+        except Exception as error:  # pylint: disable=broad-except
+            result = error
+        # clear the
+        self._receive_task = None
+        LOGGER.debug("Recevie task finished with: %r", result)
 
     async def close(self) -> None:
-        await self._socket_factory_short.close()
-        await self._socket_factory_long.close()
+        if self._receive_task is not None and not self._receive_task.done():
+            self._receive_task.cancel()
+            await asyncio.wait([self._receive_task])
+        await self._socket_factory.close()
         await super().close()
