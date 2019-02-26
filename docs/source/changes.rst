@@ -1,6 +1,13 @@
 Changelog
 =========
 
+
+0.4.4 (2019-02-26)
+------------------
+
+- Refactor the websocket transport implementation to use a single connection
+  per client
+
 0.4.3 (2019-02-12)
 ------------------
 

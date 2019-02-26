@@ -179,50 +179,27 @@ class TestTransportBase(TestCase):
         ])
 
     @mock.patch("aiocometd.transports.base.is_event_message")
-    @mock.patch("aiocometd.transports.base.is_server_error_message")
-    async def test_consume_message(self, is_server_error_message,
-                                   is_event_message):
+    async def test_consume_message_non_event_message(self, is_event_message):
         is_event_message.return_value = False
-        is_server_error_message.return_value = False
         self.transport.incoming_queue = mock.MagicMock()
         self.transport.incoming_queue.put = mock.CoroutineMock()
         response_message = object()
 
         await self.transport._consume_message(response_message)
 
-        is_server_error_message.assert_called_with(response_message)
         is_event_message.assert_called_with(response_message)
         self.transport.incoming_queue.put.assert_not_called()
 
     @mock.patch("aiocometd.transports.base.is_event_message")
-    @mock.patch("aiocometd.transports.base.is_server_error_message")
-    async def test_consume_message_event_message(self, is_server_error_message,
-                                                 is_event_message):
+    async def test_consume_message_event_message(self, is_event_message):
         is_event_message.return_value = True
-        is_server_error_message.return_value = False
         self.transport.incoming_queue = mock.MagicMock()
         self.transport.incoming_queue.put = mock.CoroutineMock()
         response_message = object()
 
         await self.transport._consume_message(response_message)
 
-        is_server_error_message.assert_called_with(response_message)
         is_event_message.assert_called_with(response_message)
-
-    @mock.patch("aiocometd.transports.base.is_event_message")
-    @mock.patch("aiocometd.transports.base.is_server_error_message")
-    async def test_consume_message_server_error_message(
-            self, is_server_error_message, is_event_message):
-        is_event_message.return_value = False
-        is_server_error_message.return_value = True
-        self.transport.incoming_queue = mock.MagicMock()
-        self.transport.incoming_queue.put = mock.CoroutineMock()
-        response_message = object()
-
-        await self.transport._consume_message(response_message)
-
-        is_server_error_message.assert_called_with(response_message)
-        is_event_message.assert_not_called()
 
     def test_update_subscriptions_new_subscription_success(self):
         response_message = {
@@ -440,6 +417,32 @@ class TestTransportBase(TestCase):
 
     @mock.patch("aiocometd.transports.base.is_matching_response")
     async def test_consume_payload_non_matching(self, is_matching_response):
+        payload = [
+            {
+                "channel": MetaChannel.CONNECT,
+                "successful": True,
+                "id": "1"
+            }
+        ]
+        message = object()
+        self.transport._update_subscriptions = mock.MagicMock()
+        is_matching_response.return_value = False
+        self.transport._consume_message = mock.CoroutineMock()
+        self.transport._process_incoming_payload = mock.CoroutineMock()
+
+        result = await self.transport._consume_payload(
+            payload, find_response_for=message)
+
+        self.assertIsNone(result)
+        self.assertEqual(self.transport.reconnect_advice, {})
+        self.transport._update_subscriptions.assert_called_with(payload[0])
+        is_matching_response.assert_called_with(payload[0], message)
+        self.transport._consume_message.assert_called_with(payload[0])
+        self.transport._process_incoming_payload.assert_called_with(payload,
+                                                                    None)
+
+    @mock.patch("aiocometd.transports.base.is_matching_response")
+    async def test_consume_payload_none_matching(self, is_matching_response):
         payload = [
             {
                 "channel": MetaChannel.CONNECT,
@@ -793,14 +796,14 @@ class TestTransportBase(TestCase):
              {"successful": True},
              "retry"),
             ("unsuccessful without advice",
-             {"succesful": False},
+             {"successful": False},
              "retry"),
             ("unsuccessful with advice and missing reconnect",
-             {"succesful": False, "advice": {}},
+             {"successful": False, "advice": {}},
              "retry"),
             ("unsuccessful with advice and reconnect",
-             {"succesful": False, "advice": {"reconnect": "none"}},
-             "retry")
+             {"successful": False, "advice": {"reconnect": "none"}},
+             "none")
         )
         for name, result, expected_advice in cases:
             with self.subTest(msg=name):

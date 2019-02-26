@@ -91,7 +91,7 @@ def get_error_args(error_field: Union[str, None]) -> Optional[List[str]]:
 
 
 def is_matching_response(response_message: JsonObject,
-                         message: JsonObject) -> bool:
+                         message: Optional[JsonObject]) -> bool:
     """Check whether the *response_message* is a response for the
     given *message*.
 
@@ -129,8 +129,13 @@ def is_event_message(response_message: JsonObject) -> bool:
              otherwise False.
     """
     channel = response_message["channel"]
+    # every message is a response message if it's not on a meta channel
+    # and if it's either not on a service channel, or it's on a service channel
+    # but doesn't has an id (which means that it's not a response for an
+    # outgoing message) and it has a data field
     return (not channel.startswith(META_CHANNEL_PREFIX) and
-            not channel.startswith(SERVICE_CHANNEL_PREFIX) and
+            (not channel.startswith(SERVICE_CHANNEL_PREFIX) or
+             "id" not in response_message) and
             "data" in response_message)
 
 

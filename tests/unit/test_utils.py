@@ -238,11 +238,13 @@ class TestIsAuthErrorMessage(TestCase):
 
 
 class TestIsEventMessage(TestCase):
-    def assert_event_message_for_channel(self, channel, has_data,
+    def assert_event_message_for_channel(self, channel, has_data, has_id,
                                          expected_result):
         message = dict(channel=channel)
         if has_data:
             message["data"] = None
+        if has_id:
+            message["id"] = None
 
         result = is_event_message(message)
 
@@ -250,38 +252,52 @@ class TestIsEventMessage(TestCase):
 
     def test_is_event_message_subscribe(self):
         channel = MetaChannel.SUBSCRIBE
-        self.assert_event_message_for_channel(channel, False, False)
-        self.assert_event_message_for_channel(channel, True, False)
+        self.assert_event_message_for_channel(channel, False, False, False)
+        self.assert_event_message_for_channel(channel, True, False, False)
+        self.assert_event_message_for_channel(channel, False, True, False)
+        self.assert_event_message_for_channel(channel, True, True, False)
 
     def test_is_event_message_unsubscribe(self):
         channel = MetaChannel.UNSUBSCRIBE
-        self.assert_event_message_for_channel(channel, False, False)
-        self.assert_event_message_for_channel(channel, True, False)
+        self.assert_event_message_for_channel(channel, False, False, False)
+        self.assert_event_message_for_channel(channel, True, False, False)
+        self.assert_event_message_for_channel(channel, False, True, False)
+        self.assert_event_message_for_channel(channel, True, True, False)
 
     def test_is_event_message_non_meta_channel(self):
         channel = "/test/channel"
-        self.assert_event_message_for_channel(channel, False, False)
-        self.assert_event_message_for_channel(channel, True, True)
+        self.assert_event_message_for_channel(channel, False, False, False)
+        self.assert_event_message_for_channel(channel, True, False, True)
+        self.assert_event_message_for_channel(channel, False, True, False)
+        self.assert_event_message_for_channel(channel, True, True, True)
 
     def test_is_event_message_service_channel(self):
         channel = SERVICE_CHANNEL_PREFIX + "test"
-        self.assert_event_message_for_channel(channel, False, False)
-        self.assert_event_message_for_channel(channel, True, False)
+        self.assert_event_message_for_channel(channel, False, False, False)
+        self.assert_event_message_for_channel(channel, True, False, True)
+        self.assert_event_message_for_channel(channel, False, True, False)
+        self.assert_event_message_for_channel(channel, True, True, False)
 
     def test_is_event_message_handshake(self):
         channel = MetaChannel.HANDSHAKE
-        self.assert_event_message_for_channel(channel, False, False)
-        self.assert_event_message_for_channel(channel, True, False)
+        self.assert_event_message_for_channel(channel, False, False, False)
+        self.assert_event_message_for_channel(channel, True, False, False)
+        self.assert_event_message_for_channel(channel, False, True, False)
+        self.assert_event_message_for_channel(channel, True, True, False)
 
     def test_is_event_message_connect(self):
         channel = MetaChannel.CONNECT
-        self.assert_event_message_for_channel(channel, False, False)
-        self.assert_event_message_for_channel(channel, True, False)
+        self.assert_event_message_for_channel(channel, False, False, False)
+        self.assert_event_message_for_channel(channel, True, False, False)
+        self.assert_event_message_for_channel(channel, False, True, False)
+        self.assert_event_message_for_channel(channel, True, True, False)
 
     def test_is_event_message_disconnect(self):
         channel = MetaChannel.DISCONNECT
-        self.assert_event_message_for_channel(channel, False, False)
-        self.assert_event_message_for_channel(channel, True, False)
+        self.assert_event_message_for_channel(channel, False, False, False)
+        self.assert_event_message_for_channel(channel, True, False, False)
+        self.assert_event_message_for_channel(channel, False, True, False)
+        self.assert_event_message_for_channel(channel, True, True, False)
 
 
 class TestIsServerErrorMessage(TestCase):
