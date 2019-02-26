@@ -12,7 +12,7 @@ from aiocometd.constants import ConnectionType, MetaChannel, TransportState, \
     HANDSHAKE_MESSAGE, CONNECT_MESSAGE, DISCONNECT_MESSAGE, \
     SUBSCRIBE_MESSAGE, UNSUBSCRIBE_MESSAGE, PUBLISH_MESSAGE
 from aiocometd.utils import defer, is_matching_response, \
-    is_auth_error_message, is_server_error_message, is_event_message
+    is_auth_error_message, is_event_message
 from aiocometd.exceptions import TransportInvalidOperation, TransportError
 from aiocometd.typing import SSLValidationMode, JsonObject, JsonLoader, \
     JsonDumper, Headers, Payload
@@ -368,8 +368,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
 
         :param response_message: A response message
         """
-        if (is_server_error_message(response_message) or
-                is_event_message(response_message)):
+        if is_event_message(response_message):
             await self.incoming_queue.put(response_message)
 
     def _update_subscriptions(self, response_message: JsonObject) -> None:
@@ -409,9 +408,10 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         for extension in self._extensions:
             await extension.incoming(payload, headers)
 
-    async def _consume_payload(self, payload: Payload, *,
-                               headers: Optional[Headers] = None,
-                               find_response_for: JsonObject) \
+    async def _consume_payload(
+            self, payload: Payload, *,
+            headers: Optional[Headers] = None,
+            find_response_for: Optional[JsonObject] = None) \
             -> Optional[JsonObject]:
         """Enqueue event messages for the consumers and update the internal
         state of the transport, based on response messages in the *payload*.
