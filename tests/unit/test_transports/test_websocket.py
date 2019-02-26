@@ -183,13 +183,14 @@ class TestWebSocketTransport(TestCase):
         self.transport._create_exhange_future = mock.MagicMock(
             return_value=exchange_result
         )
-        self.transport._receive_task = object()
+        self.transport._start_receive_task = mock.MagicMock()
 
         result = await self.transport._send_socket_payload(socket, payload)
 
         self.transport._create_exhange_future.assert_called_with(payload)
         socket.send_json.assert_called_with(payload,
                                             dumps=self.transport._json_dumps)
+        self.transport._start_receive_task.assert_called()
         self.assertEqual(result, expected_result)
 
     async def test_send_socket_payload_creates_receive_task(self):
@@ -203,26 +204,14 @@ class TestWebSocketTransport(TestCase):
         self.transport._create_exhange_future = mock.MagicMock(
             return_value=exchange_result
         )
-        self.transport._receive_task = None
-        receive_task = mock.MagicMock()
-        self.transport._loop = mock.MagicMock()
-        self.transport._loop.create_task = mock.MagicMock(
-            return_value=receive_task
-        )
-        self.transport._receive = mock.MagicMock()
+        self.transport._start_receive_task = mock.MagicMock()
 
         result = await self.transport._send_socket_payload(socket, payload)
 
         self.transport._create_exhange_future.assert_called_with(payload)
         socket.send_json.assert_called_with(payload,
                                             dumps=self.transport._json_dumps)
-        self.transport._loop.create_task.assert_called_with(
-            self.transport._receive.return_value
-        )
-        self.transport._receive.assert_called_with(socket)
-        receive_task.add_done_callback.assert_called_with(
-            self.transport._receive_done
-        )
+        self.transport._start_receive_task.assert_called()
         self.assertEqual(result, expected_result)
 
     async def test_send_socket_payload_on_send_error(self):
@@ -231,13 +220,13 @@ class TestWebSocketTransport(TestCase):
         error = ValueError()
         socket.send_json = mock.CoroutineMock(side_effect=error)
         future = asyncio.Future(loop=self.loop)
-        self.transport._pending_exhanges[0] = future
         exchange_result = asyncio.Future(loop=self.loop)
         exchange_result.set_result(future)
         self.transport._create_exhange_future = mock.MagicMock(
             return_value=exchange_result
         )
-        self.transport._receive_task = object()
+        self.transport._start_receive_task = mock.MagicMock()
+        self.transport._set_exchange_errors = mock.MagicMock()
 
         with self.assertRaises(ValueError):
             await self.transport._send_socket_payload(socket, payload)
@@ -245,48 +234,47 @@ class TestWebSocketTransport(TestCase):
         self.transport._create_exhange_future.assert_called_with(payload)
         socket.send_json.assert_called_with(payload,
                                             dumps=self.transport._json_dumps)
-        self.assertEqual(future.exception(), error)
-        self.assertEqual(self.transport._pending_exhanges, {})
+        self.transport._set_exchange_errors.assert_called_with(error)
+        self.transport._start_receive_task.assert_not_called()
 
-    # async def test_send_socket_payload_socket_closed(self):
-    #     matching_response = object()
-    #     payload = [object()]
-    #     socket = mock.MagicMock()
-    #     socket.send_json = mock.CoroutineMock()
-    #     response = mock.MagicMock()
-    #     response.type = WSMsgType.CLOSE
-    #     socket.receive = mock.CoroutineMock(return_value=response)
-    #     self.transport._consume_payload = mock.CoroutineMock(
-    #         return_value=matching_response
-    #     )
-    #
-    #     with self.assertRaisesRegex(TransportConnectionClosed,
-    #                                 "Received CLOSE message on the "
-    #                                 "factory."):
-    #         await self.transport._send_socket_payload(socket, payload)
-    #
-    #     socket.send_json.assert_called_with(payload,
-    #                                         dumps=self.transport._json_dumps)
-    #     self.transport._consume_payload.assert_not_called()
-    #
-    # async def test_send_socket_payload_invalid_response(self):
-    #     payload = [object()]
-    #     socket = mock.MagicMock()
-    #     socket.send_json = mock.CoroutineMock()
-    #     response = mock.MagicMock()
-    #     response.json = mock.MagicMock(side_effect=TypeError())
-    #     socket.receive = mock.CoroutineMock(return_value=response)
-    #     self.transport._consume_payload = mock.CoroutineMock()
-    #
-    #     with self.assertRaisesRegex(TransportError,
-    #                                 "Received invalid response from the "
-    #                                 "server."):
-    #         await self.transport._send_socket_payload(socket, payload)
-    #
-    #     socket.send_json.assert_called_with(payload,
-    #                                         dumps=self.transport._json_dumps)
-    #     response.json.assert_called_with(loads=self.transport._json_loads)
-    #     self.transport._consume_payload.assert_not_called()
+    def test_start_receive_task_if_doesnt_exists(self):
+        socket = object()
+        receive_task = mock.MagicMock()
+        self.transport._loop = mock.MagicMock()
+        self.transport._loop.create_task = mock.MagicMock(
+            return_value=receive_task
+        )
+        self.transport._receive = mock.MagicMock()
+        self.transport._receive_task = None
+
+        self.transport._start_receive_task(socket)
+
+        self.transport._loop.create_task.assert_called_with(
+            self.transport._receive.return_value
+        )
+        self.transport._receive.assert_called_with(socket)
+        receive_task.add_done_callback.assert_called_with(
+            self.transport._receive_done
+        )
+        self.assertEqual(self.transport._receive_task, receive_task)
+
+    def test_start_receive_task_if_exists(self):
+        socket = object()
+        existing_receive_task = object()
+        receive_task = mock.MagicMock()
+        self.transport._loop = mock.MagicMock()
+        self.transport._loop.create_task = mock.MagicMock(
+            return_value=receive_task
+        )
+        self.transport._receive = mock.MagicMock()
+        self.transport._receive_task = existing_receive_task
+
+        self.transport._start_receive_task(socket)
+
+        self.transport._loop.create_task.assert_not_called()
+        self.transport._receive.assert_not_called()
+        receive_task.add_done_callback.assert_not_called()
+        self.assertEqual(self.transport._receive_task, existing_receive_task)
 
     async def test_send_final_payload(self):
         payload = object()

@@ -201,19 +201,25 @@ class WebSocketTransport(TransportBase):
             # send the outgoing payload
             await socket.send_json(payload, dumps=self._json_dumps)
         except Exception as error:
-            # in case of an exception set the exception for all pending futures
-            for future in self._pending_exhanges.values():
-                future.set_exception(error)
-            # clear the pending exchanges
-            self._pending_exhanges.clear()
+            # set the error as the result for all pending exchanges
+            self._set_exchange_errors(error)
             raise
 
+        # make sure the receive task is running
+        self._start_receive_task(socket)
+        # await and return the response of the server
+        return await future
+
+    def _start_receive_task(self, socket: WebSocket) -> None:
+        """Start the task which receives messages from the *socket* if it's
+        not already running
+
+        :param socket: A Websocket object
+        """
         # if the receive task is not running then start it
         if self._receive_task is None:
             self._receive_task = self._loop.create_task(self._receive(socket))
             self._receive_task.add_done_callback(self._receive_done)
-        # await and return the response of the server
-        return await future
 
     async def _receive(self, socket: WebSocket) -> None:
         """Consume the incomming messages on the given *socket*
