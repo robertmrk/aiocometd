@@ -26,9 +26,9 @@ WebSocketContextManager = AsyncContextManager[WebSocket]
 
 class WebSocketFactory:  # pylint: disable=too-few-public-methods
     """Helper class to create asynchronous callable objects, that return
-    factory objects
+    WebSocket objects
 
-    This class allows the usage of factory objects without context blocks
+    This class allows the usage of WebSocket objects without context blocks
     """
     def __init__(self, session_factory: AsyncSessionFactory):
         """
@@ -40,12 +40,12 @@ class WebSocketFactory:  # pylint: disable=too-few-public-methods
         self._socket: Optional[WebSocket] = None
 
     async def close(self) -> None:
-        """Close the factory"""
+        """Close the WebSocket"""
         with suppress(Exception):
             await self._exit()
 
     async def __call__(self, *args: Any, **kwargs: Any) -> WebSocket:
-        """Create a new factory object or returns a previously created one
+        """Create a new WebSocket object or return a previously created one
         if it's not closed
 
         :param args: positional arguments for the ws_connect function
@@ -65,7 +65,7 @@ class WebSocketFactory:  # pylint: disable=too-few-public-methods
         return self._socket
 
     async def _enter(self, *args: Any, **kwargs: Any) -> WebSocket:
-        """Enter factory context
+        """Enter WebSocket context
 
         :param args: positional arguments for the ws_connect function
         :param kwargs: keyword arguments for the ws_connect function
@@ -76,7 +76,7 @@ class WebSocketFactory:  # pylint: disable=too-few-public-methods
         return await self._context.__aenter__()
 
     async def _exit(self) -> None:
-        """Exit factory context"""
+        """Exit WebSocket context"""
         if self._context:
             await self._context.__aexit__(None, None, None)
             self._socket = self._context = None
@@ -261,11 +261,12 @@ class WebSocketTransport(TransportBase):
             result = future.result()
         except Exception as error:  # pylint: disable=broad-except
             result = error
-        # clear the
+        # clear the receive task
         self._receive_task = None
         LOGGER.debug("Recevie task finished with: %r", result)
 
     async def close(self) -> None:
+        # cancel the receive task if it exists and wait for its completeion
         if self._receive_task is not None and not self._receive_task.done():
             self._receive_task.cancel()
             await asyncio.wait([self._receive_task])
