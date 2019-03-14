@@ -46,6 +46,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
                  json_dumps: JsonDumper = json.dumps,
                  json_loads: JsonLoader = json.loads,
                  reconnect_advice: Optional[JsonObject] = None,
+                 http_session: Optional[aiohttp.ClientSession] = None,
                  loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
         """
         :param url: CometD service url
@@ -68,6 +69,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         :param json_loads: Function for JSON deserialization, the default is \
         :func:`json.loads`
         :param reconnect_advice: Initial reconnect advice
+        :param http_session: HTTP client session
         :param loop: Event :obj:`loop <asyncio.BaseEventLoop>` used to
                      schedule tasks. If *loop* is ``None`` then
                      :func:`asyncio.get_event_loop` is used to get the default
@@ -101,7 +103,7 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         #: SSL validation mode
         self.ssl = ssl
         #: http session
-        self._http_session: Optional[aiohttp.ClientSession] = None
+        self._http_session = http_session
         #: List of protocol extension objects
         self._extensions = extensions or []
         #: An auth extension
@@ -167,6 +169,17 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
     def reconnect_advice(self) -> JsonObject:
         """Reconnection advice parameters returned by the server"""
         return self._reconnect_advice
+
+    @property
+    def http_session(self) -> Optional[aiohttp.ClientSession]:
+        """HTTP client session"""
+        return self._http_session
+
+    @http_session.setter
+    def http_session(self, http_session: Optional[aiohttp.ClientSession]) \
+            -> None:
+        """HTTP client session"""
+        self._http_session = http_session
 
     @property
     def state(self) -> TransportState:
