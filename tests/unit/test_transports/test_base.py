@@ -953,6 +953,21 @@ class TestTransportBase(TestCase):
         with self.assertRaises(AttributeError):
             self.transport.endpoint = ""
 
+    def test_http_session(self):
+        self.transport._http_session = object()
+
+        self.assertEqual(self.transport.http_session,
+                         self.transport._http_session)
+
+    def test_http_session_setter(self):
+        self.transport._http_session = None
+        session = object()
+
+        self.transport.http_session = session
+
+        self.assertEqual(self.transport._http_session,
+                         session)
+
     async def test_disconnect(self):
         self.transport._state = TransportState.CONNECTED
         self.transport._stop_connect_task = mock.CoroutineMock()

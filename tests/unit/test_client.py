@@ -222,11 +222,13 @@ class TestClient(TestCase):
                                          non_default_type.value],
             "successful": True
         }
+        session = object()
         transport1 = mock.MagicMock()
         transport1.connection_type = DEFAULT_CONNECTION_TYPE
         transport1.client_id = "client_id"
         transport1.handshake = mock.CoroutineMock(return_value=response)
         transport1.reconnect_advice = object()
+        transport1.http_session = session
         transport1.close = mock.CoroutineMock()
         transport2 = mock.MagicMock()
         transport2.connection_type = non_default_type
@@ -265,6 +267,7 @@ class TestClient(TestCase):
                     json_dumps=self.client._json_dumps,
                     json_loads=self.client._json_loads,
                     reconnect_advice=transport1.reconnect_advice,
+                    http_session=session,
                     loop=self.client._loop)
             ]
         )
@@ -273,6 +276,7 @@ class TestClient(TestCase):
         self.client._pick_connection_type.assert_called_with(
             response["supportedConnectionTypes"])
         transport1.close.assert_called()
+        self.assertIsNone(transport1.http_session)
         log_message = ("INFO:aiocometd.client:"
                        "Connection types supported by the server: {!r}"
                        .format(response["supportedConnectionTypes"]))

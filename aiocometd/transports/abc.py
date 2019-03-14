@@ -2,6 +2,8 @@
 from abc import ABC, abstractmethod
 from typing import Set, Optional, List
 
+import aiohttp
+
 from aiocometd.constants import ConnectionType, TransportState
 from aiocometd.typing import JsonObject
 
@@ -42,6 +44,17 @@ class Transport(ABC):
     @abstractmethod
     def reconnect_advice(self) -> JsonObject:
         """Reconnection advice parameters returned by the server"""
+
+    @property  # type: ignore
+    @abstractmethod
+    def http_session(self) -> Optional[aiohttp.ClientSession]:
+        """HTTP client session"""
+
+    @http_session.setter  # type: ignore
+    @abstractmethod
+    def http_session(self, http_session: Optional[aiohttp.ClientSession]) \
+            -> None:
+        """HTTP client session"""
 
     @abstractmethod
     async def handshake(self, connection_types: List[ConnectionType]) \

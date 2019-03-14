@@ -1,6 +1,11 @@
 Changelog
 =========
 
+0.4.5 (2019-03-14)
+------------------
+
+- Fix connection issues when used with reverse proxy servers with cookie based
+  sticky sessions
 
 0.4.4 (2019-02-26)
 ------------------
