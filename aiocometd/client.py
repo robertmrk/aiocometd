@@ -219,9 +219,20 @@ class Client:  # pylint: disable=too-many-instance-attributes
                                   "the server are supported.")
 
             if transport.connection_type != connection_type:
+                # extract and reuse the client_id from the initial transport
                 client_id = transport.client_id
+                # extract and reuse the reconnect_advice from the initial
+                # transport
                 advice = transport.reconnect_advice
+                # extract and reuse the http_session, to avoid loosing any
+                # cookies sent to the initial transport
+                session = transport.http_session
+                # clear the http_session in the initial transport to avoid
+                # the termination of the session when the transport is closed
+                transport.http_session = None  # type: ignore
+                # close the initial transport
                 await transport.close()
+                # create the negotiated transport
                 transport = create_transport(
                     connection_type,
                     url=self.url,
@@ -233,6 +244,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
                     json_dumps=self._json_dumps,
                     json_loads=self._json_loads,
                     reconnect_advice=advice,
+                    http_session=session,
                     loop=self._loop)
             return transport
         except Exception:
