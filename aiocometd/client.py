@@ -495,9 +495,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
                 await self.close()
                 raise ServerError("Connection closed by the server",
                                   self._transport.last_connect_result)
-            else:
-                raise TransportTimeoutError("Lost connection with the "
-                                            "server.")
+            raise TransportTimeoutError("Lost connection with the server.")
         except asyncio.CancelledError:
             # cancel all tasks
             for task in tasks:
