@@ -31,13 +31,12 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
     When subclassing, at a minimum the :meth:`_send_final_payload` and
     :obj:`~Transport.connection_type` methods should be reimplemented.
     """
-    #: Timeout to give to HTTP session to close itself
-    _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
     #: The increase factor to use for request timeout
     REQUEST_TIMEOUT_INCREASE_FACTOR = 1.2
 
     def __init__(self, *, url: str,
                  incoming_queue: "asyncio.Queue[JsonObject]",
+                 http_session: aiohttp.ClientSession,
                  client_id: Optional[str] = None,
                  reconnection_timeout: Union[int, float] = 1,
                  ssl: Optional[SSLValidationMode] = None,
@@ -46,7 +45,6 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
                  json_dumps: JsonDumper = json.dumps,
                  json_loads: JsonLoader = json.loads,
                  reconnect_advice: Optional[JsonObject] = None,
-                 http_session: Optional[aiohttp.ClientSession] = None,
                  loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
         """
         :param url: CometD service url
@@ -79,6 +77,8 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         self.incoming_queue = incoming_queue
         #: CometD service url
         self._url = url
+        #: http session
+        self._http_session = http_session
         #: event loop used to schedule tasks
         self._loop = loop or asyncio.get_event_loop()
         #: clinet id value assigned by the server
@@ -102,8 +102,6 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         self._reconnect_timeout = reconnection_timeout
         #: SSL validation mode
         self.ssl = ssl
-        #: http session
-        self._http_session = http_session
         #: List of protocol extension objects
         self._extensions = extensions or []
         #: An auth extension
@@ -112,31 +110,6 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
         self._json_dumps = json_dumps
         #: Function for JSON deserialization
         self._json_loads = json_loads
-
-    async def _get_http_session(self) -> aiohttp.ClientSession:
-        """Factory method for getting the current HTTP session
-
-        :return: The current session if it's not None, otherwise it creates a
-                 new session.
-        """
-        # it would be nicer to create the session when the class gets
-        # initialized, but this seems to be the right way to do it since
-        # aiohttp produces log messages with warnings that a session should be
-        # created in a coroutine
-        if self._http_session is None:
-            self._http_session = aiohttp.ClientSession(
-                json_serialize=self._json_dumps
-            )
-        return self._http_session
-
-    async def _close_http_session(self) -> None:
-        """Close the http session if it's not already closed"""
-        # graceful shutdown recommended by the documentation
-        # https://aiohttp.readthedocs.io/en/stable/client_advanced.html\
-        # #graceful-shutdown
-        if self._http_session is not None and not self._http_session.closed:
-            await self._http_session.close()
-            await asyncio.sleep(self._HTTP_SESSION_CLOSE_TIMEOUT)
 
     @property
     def connection_type(self) -> ConnectionType:  # pragma: no cover
@@ -169,17 +142,6 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
     def reconnect_advice(self) -> JsonObject:
         """Reconnection advice parameters returned by the server"""
         return self._reconnect_advice
-
-    @property
-    def http_session(self) -> Optional[aiohttp.ClientSession]:
-        """HTTP client session"""
-        return self._http_session
-
-    @http_session.setter
-    def http_session(self, http_session: Optional[aiohttp.ClientSession]) \
-            -> None:
-        """HTTP client session"""
-        self._http_session = http_session
 
     @property
     def state(self) -> TransportState:
@@ -613,7 +575,6 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
 
     async def close(self) -> None:
         """Close transport and release resources"""
-        await self._close_http_session()
 
     async def subscribe(self, channel: str) -> JsonObject:
         """Subscribe to *channel*

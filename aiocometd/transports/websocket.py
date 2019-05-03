@@ -30,12 +30,11 @@ class WebSocketFactory:  # pylint: disable=too-few-public-methods
 
     This class allows the usage of WebSocket objects without context blocks
     """
-    def __init__(self, session_factory: AsyncSessionFactory):
+    def __init__(self, http_session: aiohttp.ClientSession):
         """
-        :param session_factory: Coroutine factory function \
-        which returns an HTTP session
+        :param http_session: HTTP session
         """
-        self._session_factory = session_factory
+        self._http_session = http_session
         self._context: Optional[WebSocketContextManager] = None
         self._socket: Optional[WebSocket] = None
 
@@ -71,8 +70,7 @@ class WebSocketFactory:  # pylint: disable=too-few-public-methods
         :param kwargs: keyword arguments for the ws_connect function
         :return: Websocket object
         """
-        session = await self._session_factory()
-        self._context = session.ws_connect(*args, **kwargs)
+        self._context = self._http_session.ws_connect(*args, **kwargs)
         return await self._context.__aenter__()
 
     async def _exit(self) -> None:
@@ -89,7 +87,7 @@ class WebSocketTransport(TransportBase):
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
         #: factory for creating websockets
-        self._socket_factory = WebSocketFactory(self._get_http_session)
+        self._socket_factory = WebSocketFactory(self._http_session)
         #: pending message exchanges between the client and server,
         #: the request message's id is used as a key
         self._pending_exhanges: Dict[int, "asyncio.Future[JsonObject]"] \
@@ -100,7 +98,7 @@ class WebSocketTransport(TransportBase):
     async def _reset_socket(self) -> None:
         """Close the socket factory and recreate it"""
         await self._socket_factory.close()
-        self._socket_factory = WebSocketFactory(self._get_http_session)
+        self._socket_factory = WebSocketFactory(self._http_session)
 
     async def _get_socket(self, headers: Headers) -> WebSocket:
         """Factory function for creating a websocket object

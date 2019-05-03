@@ -8,6 +8,8 @@ import json
 from typing import Optional, List, Union, Set, AsyncIterator, Type, Any
 from types import TracebackType
 
+import aiohttp
+
 from aiocometd.transports import create_transport
 from aiocometd.transports.abc import Transport
 from aiocometd.constants import DEFAULT_CONNECTION_TYPE, ConnectionType, \
@@ -36,6 +38,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
     #: Defualt connection types list
     _DEFAULT_CONNECTION_TYPES = [ConnectionType.WEBSOCKET,
                                  ConnectionType.LONG_POLLING]
+    #: Timeout to give to HTTP session to close itself
+    _HTTP_SESSION_CLOSE_TIMEOUT = 0.250
 
     def __init__(self, url: str,
                  connection_types: Optional[ConnectionTypeSpec] = None, *,
@@ -110,6 +114,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
         self._json_dumps = json_dumps
         #: Function for JSON deserialization
         self._json_loads = json_loads
+        #: http session
+        self._http_session: Optional[aiohttp.ClientSession] = None
 
     def __repr__(self) -> str:
         """Formal string representation"""
@@ -163,6 +169,31 @@ class Client:  # pylint: disable=too-many-instance-attributes
         """Marks whether the client has any pending incoming messages"""
         return self.pending_count > 0
 
+    async def _get_http_session(self) -> aiohttp.ClientSession:
+        """Factory method for getting the current HTTP session
+
+        :return: The current session if it's not None, otherwise it creates a
+                 new session.
+        """
+        # it would be nicer to create the session when the class gets
+        # initialized, but this seems to be the right way to do it since
+        # aiohttp produces log messages with warnings that a session should be
+        # created in a coroutine
+        if self._http_session is None:
+            self._http_session = aiohttp.ClientSession(
+                json_serialize=self._json_dumps
+            )
+        return self._http_session
+
+    async def _close_http_session(self) -> None:
+        """Close the http session if it's not already closed"""
+        # graceful shutdown recommended by the documentation
+        # https://aiohttp.readthedocs.io/en/stable/client_advanced.html\
+        # #graceful-shutdown
+        if self._http_session is not None and not self._http_session.closed:
+            await self._http_session.close()
+            await asyncio.sleep(self._HTTP_SESSION_CLOSE_TIMEOUT)
+
     def _pick_connection_type(self, connection_types: List[str]) \
             -> Optional[ConnectionType]:
         """Pick a connection type based on the  *connection_types*
@@ -195,6 +226,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         server are supported
         """
         self._incoming_queue = asyncio.Queue(maxsize=self._max_pending_count)
+        http_session = await self._get_http_session()
         transport = create_transport(DEFAULT_CONNECTION_TYPE,
                                      url=self.url,
                                      incoming_queue=self._incoming_queue,
@@ -203,6 +235,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
                                      auth=self.auth,
                                      json_dumps=self._json_dumps,
                                      json_loads=self._json_loads,
+                                     http_session=http_session,
                                      loop=self._loop)
 
         try:
@@ -224,12 +257,6 @@ class Client:  # pylint: disable=too-many-instance-attributes
                 # extract and reuse the reconnect_advice from the initial
                 # transport
                 advice = transport.reconnect_advice
-                # extract and reuse the http_session, to avoid loosing any
-                # cookies sent to the initial transport
-                session = transport.http_session
-                # clear the http_session in the initial transport to avoid
-                # the termination of the session when the transport is closed
-                transport.http_session = None  # type: ignore
                 # close the initial transport
                 await transport.close()
                 # create the negotiated transport
@@ -244,11 +271,12 @@ class Client:  # pylint: disable=too-many-instance-attributes
                     json_dumps=self._json_dumps,
                     json_loads=self._json_loads,
                     reconnect_advice=advice,
-                    http_session=session,
+                    http_session=http_session,
                     loop=self._loop)
             return transport
         except Exception:
             await transport.close()
+            await self._close_http_session()
             raise
 
     async def open(self) -> None:
@@ -293,6 +321,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
                 if self._transport:
                     await self._transport.disconnect()
                     await self._transport.close()
+                await self._close_http_session()
             finally:
                 self._closed = True
                 LOGGER.info("Client closed.")

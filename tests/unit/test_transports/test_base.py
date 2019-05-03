@@ -23,6 +23,7 @@ class TestTransportBase(TestCase):
     def setUp(self):
         self.transport = TransportBaseImpl(url="example.com/cometd",
                                            incoming_queue=None,
+                                           http_session=None,
                                            loop=None)
 
     async def long_task(self, result, timeout=None):
@@ -38,6 +39,7 @@ class TestTransportBase(TestCase):
 
         transport = TransportBaseImpl(url=None,
                                       incoming_queue=None,
+                                      http_session=None,
                                       loop=loop)
 
         self.assertIs(transport._loop, loop)
@@ -49,7 +51,8 @@ class TestTransportBase(TestCase):
         asyncio_mock.get_event_loop.return_value = loop
 
         transport = TransportBaseImpl(url=None,
-                                      incoming_queue=None)
+                                      incoming_queue=None,
+                                      http_session=None)
 
         self.assertIs(transport._loop, loop)
         self.assertEqual(transport.state, TransportState.DISCONNECTED)
@@ -59,61 +62,17 @@ class TestTransportBase(TestCase):
 
         transport = TransportBaseImpl(url=None,
                                       incoming_queue=None,
+                                      http_session=None,
                                       reconnect_advice=advice)
 
         self.assertIs(transport.reconnect_advice, advice)
 
     def test_init_without_reconnect_advice(self):
         transport = TransportBaseImpl(url=None,
-                                      incoming_queue=None)
+                                      incoming_queue=None,
+                                      http_session=None)
 
         self.assertEqual(transport.reconnect_advice, {})
-
-    async def test_get_http_session(self):
-        self.transport._http_session = object()
-
-        session = await self.transport._get_http_session()
-
-        self.assertEqual(session, self.transport._http_session)
-
-    @mock.patch("aiocometd.transports.base.aiohttp.ClientSession")
-    async def test_get_http_session_creates_session(self, client_session_cls):
-        self.transport._http_session = None
-        session = object()
-        client_session_cls.return_value = session
-
-        session = await self.transport._get_http_session()
-
-        self.assertEqual(session, self.transport._http_session)
-        self.assertEqual(self.transport._http_session, session)
-        client_session_cls.assert_called_with(
-            json_serialize=self.transport._json_dumps
-        )
-
-    @mock.patch("aiocometd.transports.base.asyncio")
-    async def test_close_http_session(self, asyncio_mock):
-        self.transport._http_session = mock.MagicMock()
-        self.transport._http_session.closed = False
-        self.transport._http_session.close = mock.CoroutineMock()
-        asyncio_mock.sleep = mock.CoroutineMock()
-
-        await self.transport._close_http_session()
-
-        self.transport._http_session.close.assert_called()
-        asyncio_mock.sleep.assert_called_with(
-            self.transport._HTTP_SESSION_CLOSE_TIMEOUT)
-
-    @mock.patch("aiocometd.transports.base.asyncio")
-    async def test_close_http_session_already_closed(self, asyncio_mock):
-        self.transport._http_session = mock.MagicMock()
-        self.transport._http_session.closed = True
-        self.transport._http_session.close = mock.CoroutineMock()
-        asyncio_mock.sleep = mock.CoroutineMock()
-
-        await self.transport._close_http_session()
-
-        self.transport._http_session.close.assert_not_called()
-        asyncio_mock.sleep.assert_not_called()
 
     def test_finalize_message_updates_fields(self):
         message = {
@@ -953,21 +912,6 @@ class TestTransportBase(TestCase):
         with self.assertRaises(AttributeError):
             self.transport.endpoint = ""
 
-    def test_http_session(self):
-        self.transport._http_session = object()
-
-        self.assertEqual(self.transport.http_session,
-                         self.transport._http_session)
-
-    def test_http_session_setter(self):
-        self.transport._http_session = None
-        session = object()
-
-        self.transport.http_session = session
-
-        self.assertEqual(self.transport._http_session,
-                         session)
-
     async def test_disconnect(self):
         self.transport._state = TransportState.CONNECTED
         self.transport._stop_connect_task = mock.CoroutineMock()
@@ -1116,8 +1060,6 @@ class TestTransportBase(TestCase):
         self.transport._close_http_session = mock.CoroutineMock()
 
         await self.transport.close()
-
-        self.transport._close_http_session.assert_called()
 
     async def test_send_payload(self):
         payload = object()

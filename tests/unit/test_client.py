@@ -101,6 +101,52 @@ class TestClient(TestCase):
         with self.assertRaises(AttributeError):
             self.client.closed = False
 
+    async def test_get_http_session(self):
+        self.client._http_session = object()
+
+        session = await self.client._get_http_session()
+
+        self.assertEqual(session, self.client._http_session)
+
+    @mock.patch("aiocometd.client.aiohttp.ClientSession")
+    async def test_get_http_session_creates_session(self, client_session_cls):
+        self.client._http_session = None
+        session = object()
+        client_session_cls.return_value = session
+
+        session = await self.client._get_http_session()
+
+        self.assertEqual(session, self.client._http_session)
+        self.assertEqual(self.client._http_session, session)
+        client_session_cls.assert_called_with(
+            json_serialize=self.client._json_dumps
+        )
+
+    @mock.patch("aiocometd.client.asyncio")
+    async def test_close_http_session(self, asyncio_mock):
+        self.client._http_session = mock.MagicMock()
+        self.client._http_session.closed = False
+        self.client._http_session.close = mock.CoroutineMock()
+        asyncio_mock.sleep = mock.CoroutineMock()
+
+        await self.client._close_http_session()
+
+        self.client._http_session.close.assert_called()
+        asyncio_mock.sleep.assert_called_with(
+            self.client._HTTP_SESSION_CLOSE_TIMEOUT)
+
+    @mock.patch("aiocometd.client.asyncio")
+    async def test_close_http_session_already_closed(self, asyncio_mock):
+        self.client._http_session = mock.MagicMock()
+        self.client._http_session.closed = True
+        self.client._http_session.close = mock.CoroutineMock()
+        asyncio_mock.sleep = mock.CoroutineMock()
+
+        await self.client._close_http_session()
+
+        self.client._http_session.close.assert_not_called()
+        asyncio_mock.sleep.assert_not_called()
+
     @mock.patch("aiocometd.client.ConnectionType", new=MockConnectionType)
     def test_pick_connection_type(self):
         self.client._connection_types = [
@@ -148,6 +194,10 @@ class TestClient(TestCase):
         self.client._verify_response = mock.MagicMock()
         self.client.extensions = object()
         self.client.auth = object()
+        http_session = object()
+        self.client._get_http_session = mock.CoroutineMock(
+            return_value=http_session
+        )
 
         with self.assertLogs("aiocometd.client", "DEBUG") as log:
             result = await self.client._negotiate_transport()
@@ -162,6 +212,7 @@ class TestClient(TestCase):
             auth=self.client.auth,
             json_dumps=self.client._json_dumps,
             json_loads=self.client._json_loads,
+            http_session=http_session,
             loop=self.client._loop)
         transport.handshake.assert_called_with(self.client._connection_types)
         self.client._verify_response.assert_called_with(response)
@@ -187,6 +238,10 @@ class TestClient(TestCase):
             mock.MagicMock(return_value=None)
         self.client.extensions = object()
         self.client.auth = object()
+        http_session = object()
+        self.client._get_http_session = mock.CoroutineMock(
+            return_value=http_session
+        )
 
         with self.assertRaisesRegex(ClientError,
                                     "None of the connection types offered "
@@ -203,6 +258,7 @@ class TestClient(TestCase):
             auth=self.client.auth,
             json_dumps=self.client._json_dumps,
             json_loads=self.client._json_loads,
+            http_session=http_session,
             loop=self.client._loop)
         transport.handshake.assert_called_with(self.client._connection_types)
         self.client._pick_connection_type.assert_called_with(
@@ -222,13 +278,11 @@ class TestClient(TestCase):
                                          non_default_type.value],
             "successful": True
         }
-        session = object()
         transport1 = mock.MagicMock()
         transport1.connection_type = DEFAULT_CONNECTION_TYPE
         transport1.client_id = "client_id"
         transport1.handshake = mock.CoroutineMock(return_value=response)
         transport1.reconnect_advice = object()
-        transport1.http_session = session
         transport1.close = mock.CoroutineMock()
         transport2 = mock.MagicMock()
         transport2.connection_type = non_default_type
@@ -239,6 +293,10 @@ class TestClient(TestCase):
         self.client._verify_response = mock.MagicMock()
         self.client.extensions = object()
         self.client.auth = object()
+        http_session = object()
+        self.client._get_http_session = mock.CoroutineMock(
+            return_value=http_session
+        )
 
         with self.assertLogs("aiocometd.client", "DEBUG") as log:
             result = await self.client._negotiate_transport()
@@ -255,6 +313,7 @@ class TestClient(TestCase):
                     auth=self.client.auth,
                     json_dumps=self.client._json_dumps,
                     json_loads=self.client._json_loads,
+                    http_session=http_session,
                     loop=self.client._loop),
                 mock.call(
                     non_default_type,
@@ -267,7 +326,7 @@ class TestClient(TestCase):
                     json_dumps=self.client._json_dumps,
                     json_loads=self.client._json_loads,
                     reconnect_advice=transport1.reconnect_advice,
-                    http_session=session,
+                    http_session=http_session,
                     loop=self.client._loop)
             ]
         )
@@ -276,7 +335,6 @@ class TestClient(TestCase):
         self.client._pick_connection_type.assert_called_with(
             response["supportedConnectionTypes"])
         transport1.close.assert_called()
-        self.assertIsNone(transport1.http_session)
         log_message = ("INFO:aiocometd.client:"
                        "Connection types supported by the server: {!r}"
                        .format(response["supportedConnectionTypes"]))
@@ -331,6 +389,7 @@ class TestClient(TestCase):
         self.client._transport.client_id = "client_id"
         self.client._transport.disconnect = mock.CoroutineMock()
         self.client._transport.close = mock.CoroutineMock()
+        self.client._close_http_session = mock.CoroutineMock()
         expected_log = [
             "INFO:aiocometd.client:Closing client...",
             "INFO:aiocometd.client:Client closed."
@@ -341,6 +400,7 @@ class TestClient(TestCase):
 
         self.client._transport.disconnect.assert_called()
         self.client._transport.close.assert_called()
+        self.client._close_http_session.assert_called()
         self.assertTrue(self.client.closed)
         self.assertEqual(log.output, expected_log)
 
@@ -350,6 +410,7 @@ class TestClient(TestCase):
         self.client._transport.client_id = "client_id"
         self.client._transport.disconnect = mock.CoroutineMock()
         self.client._transport.close = mock.CoroutineMock()
+        self.client._close_http_session = mock.CoroutineMock()
         self.client._incoming_queue = asyncio.Queue()
         self.client._incoming_queue.put_nowait(object())
         expected_log = [
@@ -363,6 +424,7 @@ class TestClient(TestCase):
 
         self.client._transport.disconnect.assert_called()
         self.client._transport.close.assert_called()
+        self.client._close_http_session.assert_called()
         self.assertTrue(self.client.closed)
         self.assertEqual(log.output, expected_log)
 
@@ -372,11 +434,13 @@ class TestClient(TestCase):
         self.client._transport.client_id = "client_id"
         self.client._transport.disconnect = mock.CoroutineMock()
         self.client._transport.close = mock.CoroutineMock()
+        self.client._close_http_session = mock.CoroutineMock()
 
         await self.client.close()
 
         self.client._transport.disconnect.assert_not_called()
         self.client._transport.close.assert_not_called()
+        self.client._close_http_session.assert_not_called()
         self.assertTrue(self.client.closed)
 
     async def test_close_on_transport_error(self):
@@ -388,6 +452,7 @@ class TestClient(TestCase):
             side_effect=error
         )
         self.client._transport.close = mock.CoroutineMock()
+        self.client._close_http_session = mock.CoroutineMock()
         expected_log = ["INFO:aiocometd.client:Closing client...",
                         "INFO:aiocometd.client:Client closed."]
 
@@ -398,11 +463,13 @@ class TestClient(TestCase):
         self.assertEqual(log.output, expected_log)
         self.client._transport.disconnect.assert_called()
         self.client._transport.close.assert_not_called()
+        self.client._close_http_session.assert_not_called()
         self.assertTrue(self.client.closed)
 
     async def test_close_no_transport(self):
         self.client._closed = False
         self.client._transport = None
+        self.client._close_http_session = mock.CoroutineMock()
         expected_log = [
             "INFO:aiocometd.client:Closing client...",
             "INFO:aiocometd.client:Client closed."
@@ -413,6 +480,7 @@ class TestClient(TestCase):
 
         self.assertTrue(self.client.closed)
         self.assertEqual(log.output, expected_log)
+        self.client._close_http_session.assert_called()
 
     async def test_subscribe(self):
         response = {

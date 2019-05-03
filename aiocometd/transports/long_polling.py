@@ -27,7 +27,7 @@ class LongPollingTransport(TransportBase):
     async def _send_final_payload(self, payload: Payload, *,
                                   headers: Headers) -> JsonObject:
         try:
-            session = await self._get_http_session()
+            session = self._http_session
             async with self._http_semaphore:
                 response = await session.post(self._url, json=payload,
                                               ssl=self.ssl, headers=headers,

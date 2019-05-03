@@ -11,9 +11,8 @@ from aiocometd.exceptions import TransportConnectionClosed, TransportError
 class TestWebSocketFactory(TestCase):
     def setUp(self):
         self.session = mock.CoroutineMock()
-        self.session_factory = mock.CoroutineMock(return_value=self.session)
         self.url = "http://example.com/"
-        self.factory = WebSocketFactory(self.session_factory)
+        self.factory = WebSocketFactory(self.session)
 
     async def test_enter(self):
         socket = object()
@@ -96,8 +95,10 @@ class TestWebSocketFactory(TestCase):
 
 class TestWebSocketTransport(TestCase):
     def setUp(self):
+        self.http_session = object()
         self.transport = WebSocketTransport(url="example.com/cometd",
                                             incoming_queue=None,
+                                            http_session=self.http_session,
                                             loop=None)
 
     def test_connection_type(self):
@@ -138,7 +139,6 @@ class TestWebSocketTransport(TestCase):
         self.transport._receive_task.cancel.assert_called()
         asyncio_obj.wait.assert_called_with([self.transport._receive_task])
         self.transport._socket_factory.close.assert_called()
-        self.transport._close_http_session.assert_called()
 
     @mock.patch("aiocometd.transports.websocket.asyncio")
     async def test_close_on_done_receive_task(self, asyncio_obj):
@@ -156,7 +156,6 @@ class TestWebSocketTransport(TestCase):
         self.transport._receive_task.cancel.assert_not_called()
         asyncio_obj.wait.assert_not_called()
         self.transport._socket_factory.close.assert_called()
-        self.transport._close_http_session.assert_called()
 
     @mock.patch("aiocometd.transports.websocket.asyncio")
     async def test_close_on_no_receive_task(self, asyncio_obj):
@@ -170,7 +169,6 @@ class TestWebSocketTransport(TestCase):
         await self.transport.close()
 
         self.transport._socket_factory.close.assert_called()
-        self.transport._close_http_session.assert_called()
 
     async def test_send_socket_payload(self):
         payload = object()
@@ -366,7 +364,7 @@ class TestWebSocketTransport(TestCase):
 
         old_factory.close.assert_called()
         self.assertIs(self.transport._socket_factory, socket_factory)
-        ws_factory_cls.assert_called_with(self.transport._get_http_session)
+        ws_factory_cls.assert_called_with(self.http_session)
 
     @mock.patch("aiocometd.transports.websocket.asyncio.Future")
     async def test_create_exhange_future(self, future_cls):
