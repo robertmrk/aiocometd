@@ -516,6 +516,9 @@ class TransportBase(Transport):  # pylint: disable=too-many-instance-attributes
             if self.state != TransportState.DISCONNECTING:
                 self._state = TransportState.CONNECTING
 
+        if result['successful'] and result['successful'] == False:
+            raise Exception('Error Connecting', result['error'])
+
         LOGGER.debug("Connect task finished with: %r", result)
 
         if self.state != TransportState.DISCONNECTING:
