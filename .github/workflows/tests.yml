@@ -44,9 +44,9 @@ jobs:
           pyenv install --skip-existing 3.8
       - name: Install pipenv
         run: |
-        eval "$(pyenv init --path)"
-        eval "$(pyenv init -)"
-        pip install --upgrade pipenv wheel
+          eval "$(pyenv init --path)"
+          eval "$(pyenv init -)"
+          pip install --upgrade pipenv wheel
       - name: Install dependencies
         run: |
           eval "$(pyenv init --path)"
