@@ -12,7 +12,8 @@ TESTS_REQUIRE = [
     "docker>=3.5.1",
     "flake8",
     "pylint",
-    "mypy"
+    "mypy",
+    "tox"
 ]
 DOCS_REQUIRE = [
     "Sphinx>=1.7,<2.0",

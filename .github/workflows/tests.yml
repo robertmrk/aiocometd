@@ -1,0 +1,56 @@
+name: Run Python Tests
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Determine python version
+        run: |
+          echo "TARGET_PYTHON_VERSION=$(awk -F'\"' '/python_version/{print $2}' Pipfile)" >> $GITHUB_ENV
+          echo "TARGET_PYTHON_MINOR_VERSION=$(awk -F'[\".]' '/python_version/{print $2 "." $3}' Pipfile)" >> $GITHUB_ENV
+      - name: Bootstrap Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: ${{ env.TARGET_PYTHON_MINOR_VERSION }}
+          cache: 'pipenv'
+      - name: Install pyenv
+        run: curl https://pyenv.run | bash
+      - name: Install Build Python
+        run: |
+          export PYENV_ROOT="$HOME/.pyenv"
+          export PATH="$PYENV_ROOT/bin:$PATH"
+          eval "$(pyenv init --path)"
+          eval "$(pyenv init -)"
+          pyenv install --skip-existing ${{ env.TARGET_PYTHON_VERSION }}
+          pyenv global ${{ env.TARGET_PYTHON_VERSION }}
+      - name: Install Test Pythons
+        run: |
+          export PYENV_ROOT="$HOME/.pyenv"
+          export PATH="$PYENV_ROOT/bin:$PATH"
+          eval "$(pyenv init --path)"
+          eval "$(pyenv init -)"
+          pyenv install --skip-existing 3.6
+          pyenv install --skip-existing 3.7
+          pyenv install --skip-existing 3.8
+      - name: Install pipenv
+        run: |
+        eval "$(pyenv init --path)"
+        eval "$(pyenv init -)"
+        pip install --upgrade pipenv wheel
+      - name: Install dependencies
+        run: |
+          eval "$(pyenv init --path)"
+          eval "$(pyenv init -)"
+          pip install -e .
+          pip install -e ".[tests]"
+      - name: Test
+        run: tox
