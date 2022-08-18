@@ -23,7 +23,7 @@ def defer(coro_func: CoroFunction, delay: Union[int, float, None] = None, *,
     async def wrapper(*args: Any, **kwargs: Any) -> Any:  \
             # pylint: disable=missing-docstring
         if delay:
-            await asyncio.sleep(delay, loop=loop)  # type: ignore
+            await asyncio.sleep(delay)  # type: ignore
         return await coro_func(*args, **kwargs)
 
     return wrapper

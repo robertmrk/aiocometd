@@ -25,7 +25,7 @@ class TestClient(TestCase):
 
     async def long_task(self, result, timeout=None):
         if timeout:
-            await asyncio.sleep(timeout, loop=self.loop)
+            await asyncio.sleep(timeout)
         if not isinstance(result, Exception):
             return result
         else:

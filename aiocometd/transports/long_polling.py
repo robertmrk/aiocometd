@@ -22,7 +22,7 @@ class LongPollingTransport(TransportBase):
         super().__init__(**kwargs)
 
         #: semaphore to limit the number of concurrent HTTP connections to 2
-        self._http_semaphore = asyncio.Semaphore(2, loop=self._loop)
+        self._http_semaphore = asyncio.Semaphore(2)
 
     async def _send_final_payload(self, payload: Payload, *,
                                   headers: Headers) -> JsonObject:
@@ -34,7 +34,7 @@ class LongPollingTransport(TransportBase):
                                               timeout=self.request_timeout)
             response_payload = await response.json(loads=self._json_loads)
             headers = response.headers
-        except aiohttp.client_exceptions.ClientError as error:
+        except aiohttp.ClientError as error:
             LOGGER.warning("Failed to send payload, %s", error)
             raise TransportError(str(error)) from error
         response_message = await self._consume_payload(
