@@ -22,7 +22,7 @@ class LongPollingTransport(TransportBase):
         super().__init__(**kwargs)
 
         #: semaphore to limit the number of concurrent HTTP connections to 2
-        self._http_semaphore = asyncio.Semaphore(2, loop=self._loop)
+        self._http_semaphore = asyncio.Semaphore(2)
 
     async def _send_final_payload(self, payload: Payload, *,
                                   headers: Headers) -> JsonObject:
