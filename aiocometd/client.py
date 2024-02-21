@@ -509,8 +509,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         try:
             done, pending = await asyncio.wait(
                 tasks,
-                return_when=asyncio.FIRST_COMPLETED,
-                loop=self._loop)
+                return_when=asyncio.FIRST_COMPLETED)
 
             # cancel all pending tasks
             for task in pending:
@@ -546,7 +545,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
             try:
                 await asyncio.wait_for(
                     self._transport.wait_for_state(TransportState.CONNECTED),
-                    timeout, loop=self._loop
+                    timeout
                 )
             except asyncio.TimeoutError:
                 break

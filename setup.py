@@ -43,8 +43,7 @@ setup(
                                   read('docs/source/changes.rst'))),
     classifiers=[
         "Programming Language :: Python",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: Implementation :: CPython",
         "Framework :: AsyncIO",
         "License :: OSI Approved :: MIT License"
@@ -56,7 +55,7 @@ setup(
     project_urls=metadata["PROJECT_URLS"],
     license="MIT",
     packages=find_packages(exclude=("tests*", "examples")),
-    python_requires=">=3.6.0",
+    python_requires=">=3.10.0",
     install_requires=INSTALL_REQUIRES,
     tests_require=TESTS_REQUIRE,
     extras_require={
